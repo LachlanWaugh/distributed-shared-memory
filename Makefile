@@ -1,7 +1,7 @@
 # Makefile for COMP9243 Distributed Shared Memory Assignment
 
 CC = gcc
-CFLAGS = -Wall -Werror -std=gnu99 -g
+CFLAGS = -Wall -Werror -fsanitize=address -Wshadow -std=gnu99 -g
 AR = ar
 
 all : dsm

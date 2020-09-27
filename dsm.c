@@ -25,7 +25,6 @@ int main (int argc, char **argv) {
                            "HOSTFILE, which defaults to `hosts'.  If the file does not exist,\n"
                            "`localhost' is used.";
     
-    //printf("%s\n", usage);
     extern char *optarg;
     extern int optind;
     int opt = 0;
@@ -36,15 +35,16 @@ int main (int argc, char **argv) {
     for (int i = 0; i < MAX_HOSTS; i++) {
         hostnames[i] = NULL;
     }
-    char *logfile_name;
-    int n_node_processes;
+    char *logfile_name = NULL;
+    int n_node_processes = 1; // default to 1
     char *executable_filename;
-    char **node_options;
+    char **node_options = NULL;
+    int node_options_length = 0;
     // Use getopt to retrieve command line options
     while ((opt = getopt(argc, argv, optstring)) != -1) {
         switch(opt) {
             case 'H':
-                hostfile_name = optarg;
+                strcpy(hostfile_name, optarg);
                 printf("hostfile: %s\n", hostfile_name);
                 read_hostnames_from_file(hostfile_name, hostnames);
                 break;
@@ -52,7 +52,7 @@ int main (int argc, char **argv) {
                 printf("%s\n", usage);
                 break;
             case 'l':
-                logfile_name = optarg;
+                strcpy(logfile_name, optarg);
                 printf("logfile: %s\n", logfile_name);
                 break;
             case 'n':
@@ -63,11 +63,9 @@ int main (int argc, char **argv) {
                 printf("dsm version 1.0\n");
                 break;
             case '?':
-                printf("error: invalid argument");
-                exit(1);
+                exit(EXIT_FAILURE);
                 break;
         }
-        
     }
 
     // Get executable filename
@@ -76,30 +74,46 @@ int main (int argc, char **argv) {
         printf("Executable filename: %s\n", executable_filename);
         optind++;
     } else {
-        printf("error: Missing argument EXECUTABLE-FILE\n");
-        printf("%s\n", usage);
+        printf("error: Missing mandatory argument EXECUTABLE-FILE\n");
         exit(EXIT_FAILURE);
     }
 
     // Collect node options
     if (optind < argc) {
-        int length = argc - optind;
-        node_options = malloc(sizeof(char*) * length);
-        for (int i = 0; i < length; i++) {
+        node_options_length = argc - optind;
+        node_options = malloc(sizeof(char*) * node_options_length);
+        for (int i = 0; i < node_options_length; i++) {
             node_options[i] = malloc(sizeof(char) * MAX_ARGUMENT_LENGTH);
         }
-        printf("Node arguments:\n");
-        for (int i = 0; i < length; i++) {
+        printf("Node options:\n");
+        for (int i = 0; i < node_options_length; i++) {
             strcpy(node_options[i], argv[optind]);
             printf("%s\n", node_options[i]);
             optind++;
         }
     }
+
     // If hostnames are not set (-H flag was not used)
     if (hostnames[0] == NULL) {
         // Read from 'hosts' instead
         read_hostnames_from_file("hosts", hostnames);    
     }
+
+    // Fork helper processes
+
+    // Free memory
+    if (node_options != NULL) {
+        for (int i = 0; i < node_options_length; i++) {
+            free(node_options[i]);
+        }
+        free(node_options);
+    }
+    
+    for (int i = 0; i < MAX_HOSTS; i++) {
+        free(hostnames[i]);
+    }
+    free(hostnames);
+
     return 0;
 }
 
@@ -107,11 +121,12 @@ int main (int argc, char **argv) {
 void read_hostnames_from_file(char * filename, char **hostnames) {
     FILE *fp = fopen(filename, "r");
     if (fp == NULL) {
+        // If file cannot be opened, use localhost
         hostnames[0] = malloc(sizeof(char) * MAX_HOSTNAME_LENGTH);
         strcpy(hostnames[0], "localhost");
     } 
     else {
-            // Read hostnames from the file using fgets
+        // Read hostnames from the file using fgets
         char hostname[MAX_HOSTNAME_LENGTH];
         int i = 0;
         while (fgets(hostname, MAX_HOSTNAME_LENGTH, fp) != NULL) {
@@ -121,7 +136,7 @@ void read_hostnames_from_file(char * filename, char **hostnames) {
             strcpy(hostnames[i], hostname);
             i++;
         }
-        // If file is empty
+        // If file is empty use localhost
         if (i == 0) {
             hostnames[0] = malloc(sizeof(char) * MAX_HOSTNAME_LENGTH);
             strcpy(hostnames[0], "localhost");
@@ -129,7 +144,7 @@ void read_hostnames_from_file(char * filename, char **hostnames) {
         fclose(fp);
     }
     /* DEBUG */
-    // Check hostnames
+    // Print hostnames
     printf("Hostnames:\n");
     for (int i = 0; i < MAX_HOSTS; i++) {
         if (hostnames[i] != NULL) {
