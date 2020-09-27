@@ -120,6 +120,7 @@ int main (int argc, char **argv) {
         else if (proc_id == 0) {
             printf("This is child process [%d]\n", getpid());
             int err = system("ssh vina01 ~/comp9243/distributed-shared-memory/hello");
+            printf("err: %d\n", err);
             exit(EXIT_SUCCESS);
         }
         // Fork failed
