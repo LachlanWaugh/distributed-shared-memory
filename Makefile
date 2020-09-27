@@ -2,6 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Werror -fsanitize=address -Wshadow -std=gnu99 -g
+LDFLAGS = -fsanitize=address
 AR = ar
 
 all : dsm
