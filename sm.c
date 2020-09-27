@@ -9,29 +9,28 @@
  *   node process are returned in `nodes' and `nid', respectively.
  */
 int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
+    // TODO:
     return 0;
 }
 
 /* Deregister node process.
  */
 void sm_node_exit (void) {
-
+    // TODO:
 }
 
 /* Allocate object of `size' byte in SM.
  *
  * - Returns NULL if allocation failed.
  */
-void *sm_malloc (size_t size) {
-
-}
+void *sm_malloc (size_t size); // MILESTONE 2
 
 /* Barrier synchronisation
  *
  * - Barriers are not guaranteed to work after some node processes have quit.
  */
 void sm_barrier (void) {
-
+    // TODO:
 }
 
 /* Broadcast an address
@@ -40,6 +39,4 @@ void sm_barrier (void) {
  *   to the memory area referenced by `addr' on the remaining node processes.
  * - `addr' may not refer to shared memory.
  */
-void sm_bcast (void **addr, int root_nid) {
-    
-}
+void sm_bcast (void **addr, int root_nid); // MILESTONE 2
