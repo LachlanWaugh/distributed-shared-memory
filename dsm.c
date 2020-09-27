@@ -125,7 +125,9 @@ int main (int argc, char **argv) {
         else if (proc_id == 0) {
             printf("This is child process [%d]\n", getpid());
             printf("attempting to run node process on: %s\n", hostnames[allocated_hostname_index]);
-            int err = system(sprintf("ssh %s ~/comp9243/distributed-shared-memory/hello", hostnames[allocated_hostname_index]));
+            char *node_proc_command;
+            sprintf(node_proc_command, "ssh %s ~/comp9243/distributed-shared-memory/hello", hostnames[allocated_hostname_index]);
+            int err = system(node_proc_command);
             printf("err: %d\n", err);
             exit(EXIT_SUCCESS);
         }
