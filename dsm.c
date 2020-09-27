@@ -106,6 +106,7 @@ int main (int argc, char **argv) {
     pid_t proc_id;
     while (helper_proc_count < n_node_processes) {
         proc_id = fork();
+        helper_proc_count++;
         // Parent process
         if (proc_id > 0) {
             printf("Parent [%d]: successfully forked %d\n", getpid(), proc_id);
@@ -118,6 +119,7 @@ int main (int argc, char **argv) {
         // Child process
         else if (proc_id == 0) {
             printf("This is child process [%d]\n", getpid());
+            int err = system("ssh vina01 ~/comp9243/distributed-shared-memory/hello");
             exit(EXIT_SUCCESS);
         }
         // Fork failed
@@ -125,7 +127,6 @@ int main (int argc, char **argv) {
             printf("error: failed to fork\n");
             exit(EXIT_FAILURE);
         }
-        helper_proc_count++;
     }
     
 
