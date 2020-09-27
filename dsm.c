@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 // #include "sm.h"
 
 #define MAX_HOSTNAME_LENGTH 255
@@ -100,6 +102,33 @@ int main (int argc, char **argv) {
     }
 
     // Fork helper processes
+    int helper_proc_count = 0;
+    pid_t proc_id;
+    while (helper_proc_count < n_node_processes) {
+        proc_id = fork();
+        // Parent process
+        if (proc_id > 0) {
+            printf("Parent [%d]: successfully forked %d\n", getpid(), proc_id);
+            // Wait for child processes
+            for (int i = 0; i < helper_proc_count; i++) {
+                int exited_id = wait(NULL);
+                printf("process exited with id: %d\n", exited_id);
+            }
+        } 
+        // Child process
+        else if (proc_id == 0) {
+            printf("This is child process [%d]\n", getpid());
+            exit(EXIT_SUCCESS);
+        }
+        // Fork failed
+        else {
+            printf("error: failed to fork\n");
+            exit(EXIT_FAILURE);
+        }
+        helper_proc_count++;
+    }
+    
+
 
     // Free memory
     if (node_options != NULL) {
