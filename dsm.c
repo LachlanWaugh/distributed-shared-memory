@@ -31,13 +31,15 @@ int main (int argc, char **argv) {
     int opt = 0;
     const char *optstring = "H:hl:n:v";
     char *hostfile_name = NULL;
-    char **hostnames = NULL;
-    int hostnames_set_flag = 0;
+    // Create hostnames array and initialise to NULL
+    char **hostnames = malloc(sizeof(char*) * MAX_HOSTS);
+    for (int i = 0; i < MAX_HOSTS; i++) {
+        hostnames[i] = NULL;
+    }
     char *logfile_name;
     int n_node_processes;
     char *executable_filename;
     char **node_options;
-
     // Use getopt to retrieve command line options
     while ((opt = getopt(argc, argv, optstring)) != -1) {
         switch(opt) {
@@ -93,35 +95,42 @@ int main (int argc, char **argv) {
             optind++;
         }
     }
-
     // If hostnames are not set (-H flag was not used)
-    if (hostnames == NULL) {
+    if (hostnames[0] == NULL) {
         // Read from 'hosts' instead
-        read_hostnames_from_file("hosts", hostnames);
+        read_hostnames_from_file("hosts", hostnames);    
     }
     return 0;
 }
 
-/* Reads hostnames from a file into an array of strings*/
+/* Reads hostnames from a file into an array of strings
+    returns 0 upon success,
+    returns 1 upon failure */
 void read_hostnames_from_file(char * filename, char **hostnames) {
-    hostnames = malloc(sizeof(char*) * MAX_HOSTS);
     for (int i = 0; i < MAX_HOSTS; i++) {
         hostnames[i] = malloc(sizeof(char) * MAX_HOSTNAME_LENGTH);
     }
     FILE *fp = fopen(filename, "r");
     if (fp == NULL) {
         printf("error: unable to open file: %s\n", filename);
-        exit(EXIT_FAILURE);
+        strcpy(hostnames[0], "localhost");
     } 
-    // Read hostnames from the file using fgets
-    char hostname[MAX_HOSTNAME_LENGTH];
-    int i = 0;
-    while (fgets(hostname, MAX_HOSTNAME_LENGTH, fp) != NULL) {
-        hostname[strcspn(hostname, "\n")] = 0; // strip newline
-        printf("hostname: %s\n", hostname);
-        strcpy(hostnames[i], hostname);
-        i++;
+    else {
+            // Read hostnames from the file using fgets
+        char hostname[MAX_HOSTNAME_LENGTH];
+        int i = 0;
+        while (fgets(hostname, MAX_HOSTNAME_LENGTH, fp) != NULL) {
+            hostname[strcspn(hostname, "\n")] = 0; // strip newline
+            printf("hostname: %s\n", hostname);
+            strcpy(hostnames[i], hostname);
+            i++;
+        }
+        // If file is empty
+        if (i == 0) {
+            strcpy(hostnames[0], "localhost");
+        }
     }
+
     fclose(fp);
 
     /* DEBUG */

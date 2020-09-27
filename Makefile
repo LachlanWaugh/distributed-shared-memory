@@ -7,7 +7,7 @@ AR = ar
 all : dsm
 
 dsm : dsm.c
-	$(CC) -o dsm dsm.c
+	$(CC) $(CFLAGS) -o dsm dsm.c
 
 clean :
 	rm -f *.o dsm
