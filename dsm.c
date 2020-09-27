@@ -8,9 +8,9 @@
 
 #define MAX_HOSTNAME_LENGTH 255
 #define MAX_ARGUMENT_LENGTH 256
-#define MAX_HOSTS 10
+#define MAX_HOSTS 64
 
-void read_hostnames_from_file(char * filename, char **hostnames);
+void read_hostnames_from_file(char * filename, char **hostnames, int *n_hostnames);
 
 int main (int argc, char **argv) {
     
@@ -33,10 +33,8 @@ int main (int argc, char **argv) {
     const char *optstring = "H:hl:n:v";
     char *hostfile_name = NULL;
     // Create hostnames array and initialise to NULL
-    char **hostnames = malloc(sizeof(char*) * MAX_HOSTS);
-    for (int i = 0; i < MAX_HOSTS; i++) {
-        hostnames[i] = NULL;
-    }
+    int n_hostnames = 1;
+    char **hostnames = NULL;
     char *logfile_name = NULL;
     int n_node_processes = 1; // default to 1
     char *executable_filename;
@@ -48,7 +46,7 @@ int main (int argc, char **argv) {
             case 'H':
                 strcpy(hostfile_name, optarg);
                 printf("hostfile: %s\n", hostfile_name);
-                read_hostnames_from_file(hostfile_name, hostnames);
+                read_hostnames_from_file(hostfile_name, hostnames, &n_hostnames);
                 break;
             case 'h':
                 printf("%s\n", usage);
@@ -98,13 +96,20 @@ int main (int argc, char **argv) {
     // If hostnames are not set (-H flag was not used)
     if (hostnames[0] == NULL) {
         // Read from 'hosts' instead
-        read_hostnames_from_file("hosts", hostnames);    
+        read_hostnames_from_file("hosts", hostnames, n_hostnames);    
     }
 
     // Fork helper processes
     int helper_proc_count = 0;
     pid_t proc_id;
     while (helper_proc_count < n_node_processes) {
+        int allocated_hostname_index;
+        if (helper_proc_count < n_hostnames) {
+            allocated_hostname_index = helper_proc_count;
+        }
+        else {
+            allocated_hostname_index = helper_proc_count % n_hostnames;
+        }
         proc_id = fork();
         helper_proc_count++;
         // Parent process
@@ -119,7 +124,8 @@ int main (int argc, char **argv) {
         // Child process
         else if (proc_id == 0) {
             printf("This is child process [%d]\n", getpid());
-            int err = system("ssh vina01 ~/comp9243/distributed-shared-memory/hello");
+            printf("attempting to run node process on: %s\n", hostnames[allocated_hostname_index]);
+            int err = system(sprintf("ssh %s ~/comp9243/distributed-shared-memory/hello", hostnames[allocated_hostname_index]));
             printf("err: %d\n", err);
             exit(EXIT_SUCCESS);
         }
@@ -149,7 +155,8 @@ int main (int argc, char **argv) {
 }
 
 /* Reads hostnames from a file into an array of strings */
-void read_hostnames_from_file(char * filename, char **hostnames) {
+void read_hostnames_from_file(char * filename, char **hostnames, int *n_hostnames) {
+    hostnames = malloc(sizeof(char*) * MAX_HOSTS);
     FILE *fp = fopen(filename, "r");
     if (fp == NULL) {
         // If file cannot be opened, use localhost
