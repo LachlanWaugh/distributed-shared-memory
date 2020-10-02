@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <sm.h>
 
-#define HOSTS_MAX 16
-#define OPT_MAX 16
-#define ARG_LEN_MAX 256
-#define NAME_LEN_MAX 256
+#define HOSTS_MAX       16
+#define OPT_MAX         16
+#define ARG_LEN_MAX     256
+#define NAME_LEN_MAX    256
+#define COMMAND_LEN_MAX 256
 
 #define USAGE "Usage: dsm [OPTION]... EXECUTABLE-FILE NODE-OPTION...\n\n\
     -H HOSTFILE list of host names\n\
@@ -25,7 +26,6 @@ typedef struct metadata {
     int    n_proc;          /* The number of processes running */
     int    n_node_opts;     /* The number of arguments given to the node */
     char **node_opts;       /* A list of the arguments given to the node */
-    char  *host_file;       /* The name of the file for hostnames */
     int    n_hosts;         /* The number of host names */
     char **host_names;      /* The list of hostnames */
     char  *log_file;        /* The name of the log file */
@@ -37,6 +37,6 @@ typedef struct metadata {
 int setup(int argc, char **argv, metadata_t *meta);
 int run(metadata_t *meta);
 int clean(metadata_t *meta);
-int read_hostfile(char *hostfile_name, char **host_names);
+int read_hostfile(char *hostfile_name, char ***host_names, int *n_hosts);
 
 #endif
