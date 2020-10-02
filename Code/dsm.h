@@ -31,11 +31,12 @@ typedef struct metadata {
     char  *log_file;        /* The name of the log file */
 } metadata_t;
 
-#ifndef DSM_H
-#define DSM_H
+#ifndef _DSM_H
+#define _DSM_H
 
 int setup(int argc, char **argv, metadata_t *meta);
 int run(metadata_t *meta);
+int execute(metadata_t *meta, int *n_proc);
 int clean(metadata_t *meta);
 int read_hostfile(char *hostfile_name, char ***host_names, int *n_hosts);
 

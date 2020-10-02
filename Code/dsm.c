@@ -89,8 +89,7 @@ int setup(int argc, char **argv, metadata_t *meta) {
 }
 
 int run(metadata_t *meta) {
-    int *n_proc = malloc(sizeof(int *)), status = 0, host_index = 0;
-    char command[COMMAND_LEN_MAX];
+    int *n_proc = malloc(sizeof(int *)), status = 0;
     pid_t pid;
 
     /* Loop until you've created the required number of processes */
@@ -104,23 +103,8 @@ int run(metadata_t *meta) {
             while(wait(NULL) > 0);
         /* Child process created */
         } else if (pid == 0) {
-            /* Loop around when insufficient numbers of hosts */
-            host_index = (*n_proc < meta->n_hosts)
-                        ? *n_proc - 1 : (*n_proc - 1) % meta->n_hosts;
-
-            /* ssh into the host and execute EXECUTABLE-FILE */
-            status = snprintf(command, COMMAND_LEN_MAX, "ssh %s %s",
-                              meta->host_names[host_index], meta->exe_file);
+            status = execute(meta, n_proc);
             if (status == 0) exit(EXIT_FAILURE);
-
-            /* Append the arguments to the command */
-            for (int i = 0; i < meta->n_node_opts; i++)
-                status = snprintf(command + strlen(command), COMMAND_LEN_MAX, " %s", meta->node_opts[i]);
-            if (status == 0) exit(EXIT_FAILURE);
-
-            status = system(command);
-            if (status == 0) exit(EXIT_FAILURE);
-
             exit(EXIT_SUCCESS);
         /* Error occurred */
         } else {
@@ -128,6 +112,30 @@ int run(metadata_t *meta) {
             exit(EXIT_FAILURE);
         }
     }
+
+    return 0;
+}
+
+int execute(metadata_t *meta, int *n_proc) {
+    int host_index = 0, status = 0;
+    char command[COMMAND_LEN_MAX];
+
+    /* Loop around when insufficient numbers of hosts */
+    host_index = (*n_proc < meta->n_hosts)
+                ? *n_proc - 1 : (*n_proc - 1) % meta->n_hosts;
+
+    /* ssh into the host and execute EXECUTABLE-FILE */
+    status = snprintf(command, COMMAND_LEN_MAX, "ssh %s %s",
+                        meta->host_names[host_index], meta->exe_file);
+    if (status == 0) exit(EXIT_FAILURE);
+
+    /* Append the arguments to the command */
+    for (int i = 0; i < meta->n_node_opts; i++)
+        status = snprintf(command + strlen(command), COMMAND_LEN_MAX, " %s", meta->node_opts[i]);
+    if (status == 0) exit(EXIT_FAILURE);
+
+    status = system(command);
+    if (status == 0) exit(EXIT_FAILURE);
 
     return 0;
 }
