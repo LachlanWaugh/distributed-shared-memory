@@ -180,13 +180,13 @@ int read_hostfile(char *host_file, char ***host_names, int *n_hosts) {
             name_buff[strlen(name_buff) - 1] = '\0'; /* Remove trailing newline */
             (*host_names)[i] = strndup(name_buff, NAME_LEN_MAX);
         }
+        *n_hosts = i;
 
         /* If the file is empty, use localhost */
         if (i == 0) {
             (*host_names)[0] = strndup("localhost", 10);
         } else {
             /* NULL-terminate the array for later traversal */
-            *n_hosts = i;
             (*host_names)[i] = NULL;
         }
 

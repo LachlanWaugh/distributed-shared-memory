@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sm.h>
+
+#include "sm.h"
 
 #define HOSTS_MAX       16
 #define OPT_MAX         16
