@@ -1,8 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "dsm.h"
 #include "sm.h"
@@ -17,7 +20,7 @@ int main(int argc, char **argv) {
     result = run(&metadata);
     if (result) exit(EXIT_FAILURE);
 
-    //clean(&metadata);
+    clean(&metadata);
 
     return result;
 }
@@ -27,7 +30,7 @@ int setup(int argc, char **argv, metadata_t *meta) {
     extern char *optarg;
     extern int optind, opterr, optopt;
 
-    int opt = 0, n_proc = 1, n_node_opts = 0, n_hosts = 1;
+    uint8_t opt = 0, n_proc = 1, n_node_opts = 0, n_hosts = 1;
     char *log_file = NULL, *host_file = NULL, *exe_file = NULL, 
          **host_names = NULL, **node_opts = NULL;
 
@@ -89,8 +92,12 @@ int setup(int argc, char **argv, metadata_t *meta) {
 }
 
 int run(metadata_t *meta) {
-    int *n_proc = malloc(sizeof(int *)), status = 0;
+    uint8_t *n_proc = malloc(sizeof(uint8_t *));
+    int status;
     pid_t pid;
+
+    allocator_t allocator;
+    status = server_init(meta, &allocator);
 
     /* Loop until you've created the required number of processes */
     while (*n_proc < meta->n_proc) {
@@ -103,8 +110,10 @@ int run(metadata_t *meta) {
             while(wait(NULL) > 0);
         /* Child process created */
         } else if (pid == 0) {
+            /* Execute the program */
             status = execute(meta, n_proc);
             if (status == 0) exit(EXIT_FAILURE);
+            
             exit(EXIT_SUCCESS);
         /* Error occurred */
         } else {
@@ -116,7 +125,7 @@ int run(metadata_t *meta) {
     return 0;
 }
 
-int execute(metadata_t *meta, int *n_proc) {
+int execute(metadata_t *meta, uint8_t *n_proc) {
     int host_index = 0, status = 0;
     char command[COMMAND_LEN_MAX];
 
@@ -156,7 +165,7 @@ int clean(metadata_t *meta) {
     return 0;
 }
 
-int read_hostfile(char *host_file, char ***host_names, int *n_hosts) {
+int read_hostfile(char *host_file, char ***host_names, uint8_t *n_hosts) {
     /* Allocate memory for the host names */
     *host_names = malloc(sizeof(char *) * HOSTS_MAX);
     for (int i = 0; i < HOSTS_MAX; i++)
@@ -192,6 +201,46 @@ int read_hostfile(char *host_file, char ***host_names, int *n_hosts) {
 
         fclose(hostfile);
     }
+
+    return 0;
+}
+
+int server_init(metadata_t *metadata, allocator_t *allocator) {
+    int status, sock;
+
+    allocator = malloc(sizeof (allocator_t *));
+
+    /* Create the list to store all of the node processes */
+    list_t *node_list = malloc(sizeof(list_t *));
+    for (int i = 0; i <= metadata->n_proc; i++)
+        node_list->nodes[i] = NULL;
+    node_list->n_nodes = 0;
+
+    /* Create the socket */
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == 0) {
+        fprintf(stderr, "Failed to create socket.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    struct sockaddr_in address;
+    address.sin_family      = AF_INET;
+    address.sin_addr.s_addr = gethostname(malloc(1), 0);
+    address.sin_port        = htons(0);
+
+    status = bind(sock, (struct sockaddr *)&address, sizeof(address));
+    if (status < 0) {
+        fprintf(stderr, "Failed to bind socket.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    status = listen(sock, metadata->n_proc);
+    if (status < 0) {
+        fprintf(stderr, "Failed to listen to socket.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    allocator->socket = sock;
 
     return 0;
 }
