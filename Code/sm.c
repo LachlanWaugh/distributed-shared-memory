@@ -1,24 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
+
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+#include <signal.h>
+#include <fcntl.h>
 
-#include "dsm.h"
 #include "sm.h"
 
 int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
-    node_t *node;
-    char *ip, *port;
-    int sock, status;
+    char *ip, buffer[1024];
+    int sock, status, port;
+    struct sockaddr_in address;
 
-    ip   = strndup(argv[0][1], NAME_LEN_MAX);
-    port = strndup(argv[0][2], NAME_LEN_MAX);
-    
-    /* Create the node */
-    node = malloc(sizeof(node_t *));
-    node->nid = *nid;
-    *(nid)++;
+    /* Extract the contact information from the end of the arguments */
+    ip   = strndup(argv[0][*argc - 2], 0x100);
+    port = strtoul(argv[0][*argc - 1], '\0', 0xA);
+    *argc -= 2;
 
     /* Create the socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -27,16 +28,20 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
         exit(EXIT_FAILURE);
     }
 
-    struct sockaddr_in address;
-    address.sin_family      = AF_INET;
-    address.sin_addr.s_addr = ip;
-    address.sin_port        = port;
+    address.sin_family = AF_INET;
+    address.sin_port   = htons(port);
+    inet_pton(AF_INET, ip, &address.sin_addr);
 
     status = connect(sock, (struct sockaddr *)&address, sizeof(address));
     if (status < 0) {
         fprintf(stderr, "Failed to connect socket.\n");
         exit(EXIT_FAILURE);
     }
+
+    /* Send an initalization request to the dsm */
+    send(sock, "init", 5, 0);
+    read(sock, buffer, 20);
+    //sscanf(buffer, "nodes: %d, nid: %d\n", nodes, nid);
 
     return 0;
 }
@@ -46,8 +51,7 @@ void sm_node_exit (void) {
 }
 
 void *sm_malloc (size_t size) {
-    // TODO
-    return NULL;
+    return malloc(size);
 }
 
 void sm_barrier (void) {

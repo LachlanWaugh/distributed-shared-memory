@@ -9,6 +9,8 @@
 #define ARG_LEN_MAX     256
 #define NAME_LEN_MAX    256
 #define COMMAND_LEN_MAX 256
+#define MSG_LEN_MAX     256
+#define PORT            9243
 
 #define USAGE "Usage: dsm [OPTION]... EXECUTABLE-FILE NODE-OPTION...\n\n\
     -H HOSTFILE list of host names\n\
@@ -24,13 +26,13 @@ HOSTFILE, which defaults to `hosts'.  If the file does not exist, \
 `localhost' is used.\n"
 
 typedef struct metadata {
-    char     *exe_file;         /* The name of the executable file */
-    uint8_t   n_proc;           /* The number of processes running */
-    uint8_t   n_node_opts;      /* The number of arguments given to the node */
-    char    **node_opts;        /* A list of the arguments given to the node */
-    uint8_t   n_hosts;          /* The number of host names */
-    char    **host_names;       /* The list of hostnames */
-    char     *log_file;         /* The name of the log file */
+    char  *exe_file;         /* The name of the executable file */
+    int    n_proc;           /* The number of processes running */
+    int    n_node_opts;      /* The number of arguments given to the node */
+    char **node_opts;        /* A list of the arguments given to the node */
+    int    n_hosts;          /* The number of host names */
+    char **host_names;       /* The list of hostnames */
+    char  *log_file;         /* The name of the log file */
 } metadata_t;
 
 typedef struct node {
@@ -38,24 +40,22 @@ typedef struct node {
     char *host_name;          /* The host this node is running on */
 } node_t;
 
-typedef struct node_list {
-    int      n_nodes;            /* The number of nodes */
-    node_t **nodes;              /* A list of all the nodes */
-} list_t;
-
 typedef struct allocator_information {
-    list_t *node_list;
+    int      n_nodes;            /* The number of nodes */
+    node_t **node_list;          /* A list of all the nodes */
     int     socket;
+    int     socket2;
 } allocator_t;
 
 #ifndef _DSM_H
 #define _DSM_H
 
 int setup(int argc, char **argv, metadata_t *meta);
-int run(metadata_t *meta);
-int execute(metadata_t *meta, uint8_t *n_proc);
+int run(metadata_t *metadata);
+int execute(metadata_t *meta, int *n_proc);
 int clean(metadata_t *meta);
 int server_init(metadata_t *metadata, allocator_t *allocator);
-int read_hostfile(char *hostfile_name, char ***host_names, uint8_t *n_hosts);
+int allocate(metadata_t *metadata, allocator_t *allocator);
+int read_hostfile(char *hostfile_name, char ***host_names, int *n_hosts);
 
 #endif
