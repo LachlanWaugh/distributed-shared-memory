@@ -1,8 +1,7 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 
-#include "sm.h"
+#ifndef _DSM_H
+#define _DSM_H
 
 #define HOSTS_MAX       16
 #define OPT_MAX         16
@@ -10,7 +9,6 @@
 #define NAME_LEN_MAX    256
 #define COMMAND_LEN_MAX 256
 #define MSG_LEN_MAX     256
-#define PORT            9243
 
 #define USAGE "Usage: dsm [OPTION]... EXECUTABLE-FILE NODE-OPTION...\n\n\
     -H HOSTFILE list of host names\n\
@@ -35,27 +33,10 @@ typedef struct metadata {
     char  *log_file;         /* The name of the log file */
 } metadata_t;
 
-typedef struct node {
-    int   nid;                /* The identifier for the node */
-    char *host_name;          /* The host this node is running on */
-} node_t;
-
-typedef struct allocator_information {
-    int      n_nodes;            /* The number of nodes */
-    node_t **node_list;          /* A list of all the nodes */
-    int     socket;
-    int     socket2;
-} allocator_t;
-
-#ifndef _DSM_H
-#define _DSM_H
-
 int setup(int argc, char **argv, metadata_t *meta);
 int run(metadata_t *metadata);
-int execute(metadata_t *meta, int *n_proc);
+int node_start(metadata_t *meta, int *n_proc);
 int clean(metadata_t *meta);
-int server_init(metadata_t *metadata, allocator_t *allocator);
-int allocate(metadata_t *metadata, allocator_t *allocator);
 int read_hostfile(char *hostfile_name, char ***host_names, int *n_hosts);
 
 #endif
