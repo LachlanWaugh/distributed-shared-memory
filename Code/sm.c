@@ -60,14 +60,14 @@ void sm_node_exit (void) {
     int status;
 
     /* Send a message to the allocator to remove this node */
-    snprintf(buffer, 0x10, "close nid=%d", sm_nid);
+    snprintf(buffer, 0x10, "close nid = %d", sm_nid);
     status = send(sm_sock, buffer, 0x10, 0);
-    if (status < 1) {
+    if (status < 0) {
         sm_fatal("failed to send close to allocator");
     } else {
         /* Wait for an acknowledgement */
         status = read(sm_sock, buffer, 20);
-        if (status < 1) sm_fatal("failed to receive closing acknowledgement");
+        if (status < 0) sm_fatal("failed to receive closing acknowledgement");
     }
 
     fflush(stdout);

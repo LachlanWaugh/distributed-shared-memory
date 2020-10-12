@@ -1,4 +1,6 @@
+PROG=~/University/COMP9243/Assignments/distributed-shared-memory/Code/share
+
 gcc share.c sm.c -o share
 make
-./dsm -n 2 ~/University/COMP9243/Assignments/distributed-shared-memory/Code/share
+./dsm -n 2 $PROG
 make clean
