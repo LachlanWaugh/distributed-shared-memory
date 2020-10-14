@@ -38,7 +38,7 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     address.sin_family = AF_INET;
     address.sin_port   = htons(port);
     inet_pton(AF_INET, ip, &address.sin_addr);
-    
+
     /* Connect to the allocator to initalize the node */
     status = connect(sock, (struct sockaddr *)&address, sizeof(address));
     if (status < 0) return sm_fatal("failed to connect socket");

@@ -75,6 +75,8 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
             if (FD_ISSET(client_socket[i], &fds)) {
                 recv(client_socket[i], buffer, 1023, 0);
 
+                fprintf(stderr, "command: '%s'\n", buffer);
+
                 /* Parse the received request */
                 status = node_execute(allocator, i, client_socket, buffer);
                 if (status) return fatal("Failed to execute command");

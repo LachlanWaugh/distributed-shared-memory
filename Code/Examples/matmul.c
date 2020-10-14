@@ -161,7 +161,7 @@ int main (int argc, char *argv[])
   sscanf (argv[1], "%d", &size);
   if (size < nid)
     quit ("matmul: SIZE must be at least number of nodes\n");
-  
+
   /* matrix allocation and generation
    */
   if (isRoot) {
