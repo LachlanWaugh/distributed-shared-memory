@@ -43,7 +43,7 @@ int main (int argc, char *argv[]) {
         *sharedChar = 'A';
     }
     sm_bcast ((void **) &sharedChar, 0);
-    
+
     /* Checkpoint A */
     printf ("node %d: 1st shared variable is at %p.\n", nid, sharedChar);
     if (0 != nid)

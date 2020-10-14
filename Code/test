@@ -3,10 +3,11 @@
 DIR=~/University/COMP9243/Assignments/distributed-shared-memory/Code
 PROG=$1
 
-mv $DIR/Examples/$PROG $DIR/$PROG
+cp $DIR/Examples/$PROG.c $DIR/$PROG.c
 
 gcc $PROG.c sm.c -o $PROG
 make
 ./dsm -n 2 $DIR/$PROG
 
 make clean
+rm share share.c

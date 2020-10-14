@@ -23,6 +23,7 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     int sock, status, port;
     struct sockaddr_in address;
 
+
     /* Extract the contact information from the end of the arguments */
     ip   = strndup(argv[0][*argc - 2], 0x100);
     port = strtoul(argv[0][*argc - 1], '\0', 0xA);
