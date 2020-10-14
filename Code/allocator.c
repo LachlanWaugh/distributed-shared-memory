@@ -22,8 +22,8 @@ int fatal(char *message) {
 int allocate(metadata_t *metadata, allocator_t *allocator) {
     struct sockaddr_in address;
     fd_set fds;
-    int client_socket[allocator->total_nodes], addrlen = sizeof(address), status,
-        sock, max_sock, activity, client;
+    int status, sock, max_sock, activity, client, addrlen = sizeof(address),
+        client_socket[allocator->total_nodes];
     char buffer[1024] = "\0";
 
     /* Initialize all the client sockets to 0 */
@@ -71,6 +71,7 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
         activity = select(max_sock+1, &fds, NULL, NULL, NULL);
         /* Read messages coming in from the existing nodes */
         for (int i = 0; i < allocator->total_nodes; i++) {
+            memset(buffer, 0, 1024);
             if (FD_ISSET(client_socket[i], &fds)) {
                 recv(client_socket[i], buffer, 1023, 0);
 
@@ -82,25 +83,32 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
     }
 
     close(allocator->socket);
+    while(wait(NULL) > 0);
     return 0;
 }
 
-/* 
+/*
  * The execution of command was extracted into a separate function for reuse
  * the barrier function
 */
 int node_execute(allocator_t *allocator, int client_index, int client_list[], char buffer[]) {
+    int status = -1;
+
     if (strstr(buffer, "close")) {
-        node_close(allocator, client_list[client_index], buffer);
-        client_list[client_index] = 0;
+        status = node_close(allocator, client_list[client_index], buffer);
         close(client_list[client_index]);
-    } else if (strcmp(buffer, "barrier") == 0) {
-        node_barrier(allocator, client_index, client_list);
+        client_list[client_index] = 0;
+    } else if (strstr(buffer, "barrier")) {
+        status = node_barrier(allocator, client_index, client_list);
+    } else if (strstr(buffer, "allocate")) {
+        status = node_allocate(allocator, client_list[client_index], buffer);
+    } else if (strstr(buffer, "cast")) {
+        status = node_cast(allocator, client_index, client_list,  buffer);
     } else {
-        return fatal("Invalid mesage received");
+        status = fatal("Invalid message received");
     }
 
-    return 0;
+    return status;
 }
 
 int node_init(allocator_t *allocator, int client) {
@@ -142,8 +150,8 @@ int node_close(allocator_t *allocator, int client, char buffer[]) {
 }
 
 int node_barrier(allocator_t *allocator, int client_index, int client_list[]) {
-    char buffer[1024];
-
+    char buffer[1024] = "\0";
+    
     /*
      * Wait for all clients to have sent a barrier request, completing their
      * pre-existing tasks to synchronise the nodes
@@ -154,9 +162,10 @@ int node_barrier(allocator_t *allocator, int client_index, int client_list[]) {
         if (client_list[i] == 0) continue;
 
         while(1) {
-            recv(client_list[i], buffer, 1023, 0);
-            if (strcmp(buffer, "barrier") == 0) break;
-            
+            memset(buffer, 0, 1024);
+            recv(client_list[i], buffer, 1023, 0);    
+            if (strstr(buffer, "barrier")) break;
+
             /* If the request isn't a barrier, execute it */
             node_execute(allocator, i, client_list, buffer);
         }
@@ -165,7 +174,70 @@ int node_barrier(allocator_t *allocator, int client_index, int client_list[]) {
     /* Once all of the nodes have completed the barrier, send them a ACK */
     for (int i = 0; i < allocator->total_nodes; i++) {
         if (client_list[i] == 0) continue;
-        send(client_list[i], "barrier ACK", 12, 0);
+        snprintf(buffer, 1024, "barrier ACK");
+        send(client_list[i], buffer, strlen(buffer), 0);
+    }
+
+    return 0;
+}
+
+int node_allocate(allocator_t *allocator, int client, char buffer[]) {
+    int nid, offset = -1;
+    size_t size;
+    page_t *page = malloc(sizeof(page_t));
+
+    /* Find which node is allocating, and how much memory they need */
+    sscanf(buffer, "allocate node %d size %ld", &nid, &size);
+
+    page->owner       = nid;
+    page->mapped[0]   = nid;
+    page->permissions = O_RDWR;
+
+    for (int i = 0; i < 0xFFFF; i++) {
+        if (allocator->page_list[i] != NULL) continue;
+
+        allocator->page_list[i] = page;
+        offset = i * getpagesize();
+        break;
+    }
+
+    memset(buffer, 0, 1024);
+    snprintf(buffer, 0x20, "offset %d", offset);
+    send(client, buffer, strlen(buffer), 0);
+
+    return 0;
+}
+
+int node_cast(allocator_t *allocator, int client, int client_list[], char buffer[]) {
+    void *address;
+    int nid, root, value;
+
+    /*  */
+    sscanf(buffer, "cast %p val %d nid %d root %d", &address, &value, &nid, &root);
+
+    /* 
+     * Find the correct value/address from the messages received from the nodes
+    */
+    for (int i = 0; i < allocator->total_nodes; i++) {
+        /* The node that initiated the bmcast won't be sending another message */
+        if (i == client) continue;
+        memset(buffer, 0, 1024);
+
+        /* Find the value sent by the root_nid */
+        recv(client_list[i], buffer, 1023, 0);
+        if (i == root) {
+            fprintf(stderr, "buffer %s\n", buffer);
+            sscanf(buffer, "cast %p val %d nid %*d root %*d", &address, &value);
+        }
+    }
+
+    /* All of the nodes have hit the cast, so send back the new value */
+    for (int i = 0; i < allocator->total_nodes; i++) {
+        memset(buffer, 0, 1024);
+
+        /* The root_nid node also will be waiting on an acknowledgement */
+        snprintf(buffer, 1024, "address %p value %d", address, value);
+        send(client_list[i], buffer, strlen(buffer), 0);
     }
 
     return 0;
@@ -182,6 +254,13 @@ int allocator_init(metadata_t *metadata, allocator_t *allocator) {
     allocator->node_list = node_list;
     allocator->n_nodes = 0;
     allocator->total_nodes = metadata->n_proc;
+
+    /* Initialize all of the pages to unused */
+    page_t **page_list = malloc(0xFFFF * sizeof(page_t *));
+    for (int i = 0; i < 0xFFFF; i++) {
+        page_list[i] = NULL;
+    }
+    allocator->page_list = page_list;
 
     /* Create the communication socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
