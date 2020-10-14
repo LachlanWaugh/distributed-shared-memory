@@ -143,9 +143,7 @@ int run(metadata_t *metadata) {
         }
     }
 
-    allocate(metadata, allocator);
-
-    return 0;
+    return allocate(metadata, allocator);
 }
 
 /*

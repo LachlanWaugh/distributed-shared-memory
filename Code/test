@@ -1,6 +1,12 @@
-PROG=~/University/COMP9243/Assignments/distributed-shared-memory/Code/share
+#!/bin/sh
 
-gcc share.c sm.c -o share
+DIR=~/University/COMP9243/Assignments/distributed-shared-memory/Code
+PROG=$1
+
+mv $DIR/Examples/$PROG $DIR/$PROG
+
+gcc $PROG.c sm.c -o $PROG
 make
-./dsm -n 2 $PROG
+./dsm -n 2 $DIR/$PROG
+
 make clean
