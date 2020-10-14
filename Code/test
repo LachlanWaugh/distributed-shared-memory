@@ -10,4 +10,4 @@ make
 ./dsm -n 2 $DIR/$PROG
 
 make clean
-rm share share.c
+rm $PROG $PROG.c
