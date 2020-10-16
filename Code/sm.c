@@ -18,11 +18,14 @@ char *sm_map;
 
 int sm_fatal(char *message) {
     fprintf(stderr, "Error: %s.\n", message);
-    if (sm_sock != 0) close(sm_sock);
+    if (sm_sock != 0)
+        close(sm_sock);
+
+    fflush(stdout);
     return -1;
 }
 
-void sm_handler(int signum, siginfo_t *si, void *ctx) {
+void sm_segv(int signum, siginfo_t *si, void *ctx) {
     char buffer[1024] = "\0";
     int value, size;
 
@@ -32,17 +35,45 @@ void sm_handler(int signum, siginfo_t *si, void *ctx) {
     long offset = (char *) si->si_addr - sm_map;
 
     /* Send a message to the allocator to find the value at the address */
-    snprintf(buffer, 1023, "handle read: node %d offset %ld |", sm_nid, offset);
+    snprintf(buffer, 1023, "read fault: node %d offset %ld", sm_nid, offset);
     send(sm_sock, buffer, strlen(buffer), 0);
 
+    memset(buffer, 0, 1023);
     /* Wait for the value to be returned */
     recv(sm_sock, buffer, 1023, 0);
     sscanf(buffer, "size %d, value %d", &size, &value);
 
-    mprotect(si->si_addr, size, PROT_READ|PROT_WRITE);
+    mprotect(si->si_addr, size, PROT_READ);
     *(char *)(si->si_addr) = value;
 
     return;
+}
+
+void sm_poll(int signum) {
+    char buffer[1024] = "\0";
+    int offset, size;
+
+    recv(sm_sock, buffer, 1023, MSG_PEEK);
+
+    /* Handle a read request for a memory address */
+    if (strstr(buffer, "request")) {
+        recv(sm_sock, buffer, 1023, 0);
+        sscanf(buffer, "request %d", &offset);
+        
+        /* Send the request value back */
+        snprintf(buffer, 1023, "value %d", *(sm_map + offset));
+        send(sm_sock, buffer, strlen(buffer), 0);
+
+    /* Handle a loss of write permissions */
+    } else if (strstr(buffer, "invalidate")) {
+        recv(sm_sock, buffer, 1023, 0);
+        sscanf(buffer, "invalidate %d size %d", &offset, &size);
+        
+        /* Invalidate the required memory and send an acknowledgement */
+        mprotect(sm_map + offset, size, PROT_NONE);
+        snprintf(buffer, 1023, "invalidate ACK");
+        send(sm_sock, buffer, strlen(buffer), 0);
+    }
 }
 
 int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
@@ -81,11 +112,20 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
                 PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     if (sm_map == MAP_FAILED) return sm_fatal("failed to map memory");
 
+    /* enable SIGPOLL on the socket */
+    fcntl(sock, F_SETFL, O_ASYNC);
+    fcntl(sock, F_SETOWN, getpid());
+    /* Create the handler for SIGPOLL */
+    struct sigaction sa_poll;
+    sa_poll.sa_handler  = sm_poll;
+    sa_poll.sa_flags    = SA_RESTART;
+    sigemptyset(&sa_poll.sa_mask);
+    sigaction(SIGPOLL, &sa_poll, NULL);
+
     /* Create the signal handler */
     struct sigaction sa;
-
-    sa.sa_sigaction = sm_handler;
-    sa.sa_flags     = SA_SIGINFO;
+    sa.sa_sigaction = sm_segv;
+    sa.sa_flags     = SA_SIGINFO|SA_RESTART;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, NULL);
 
@@ -125,28 +165,28 @@ void *sm_malloc (size_t size) {
     status = send(sm_sock, buffer, strlen(buffer), 0);
     if (status <= 0) {
         sm_fatal("failed to send alloc to allocator");
-    } else {
-        memset(buffer, 0, 1024);
-        /* Wait for an memory offset message */
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) {
-            sm_fatal("failed to receive malloc reply");
-        } else {
-            sscanf(buffer, "offset %d", &offset);
-            fflush(stdout);
-            mprotect(sm_map + offset, size, PROT_READ|PROT_WRITE);
-            memset(sm_map+offset, 0, size);
-            return (void *)(sm_map + offset);
-        }
+        return NULL;
+    }
+        
+    memset(buffer, 0, 1024);
+    /* Wait for an memory offset message */
+    status = recv(sm_sock, buffer, 1023, 0);
+    if (status <= 0) {
+        sm_fatal("failed to receive malloc reply");
+        return NULL;
     }
 
+    sscanf(buffer, "offset %d", &offset);
+    mprotect(sm_map + offset, size, PROT_READ|PROT_WRITE);
+    memset(sm_map+offset, 0, size);
+
     fflush(stdout);
-    return NULL;
+    return (void *)(sm_map + offset);
 }
 
 void sm_barrier (void) {
     char buffer[1024] = "\0";
-    int status, offset;
+    int status;
 
     /* Send a message to the allocator to remove this node */
     snprintf(buffer, 1023, "barrier");
@@ -156,16 +196,10 @@ void sm_barrier (void) {
     } else {
         /* Wait for an acknowledgement */
         status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) sm_fatal("failed to receive barrier acknowledgement");
-
-        /* Parse the recieved message as it could be requests for data */
-        if (strcmp(buffer, "close ACK") == 0) {
-        } else if (strstr(buffer, "request")) {
-            fprintf(stderr, "Request received");
-            sscanf(buffer, "request %d", &offset);
-
-            snprintf(buffer, 1023, "value %d", *(sm_map + offset));
-            send(sm_sock, buffer, strlen(buffer), 0);
+        if (status <= 0) {
+            sm_fatal("failed to receive barrier acknowledgement");
+        } else if (strcmp(buffer, "barrier ACK")) {
+            sm_fatal("invalid barrier acknowledgement received");
         }
     }
 
@@ -196,11 +230,7 @@ void sm_bcast (void **addr, int root_nid) {
         sscanf(buffer, "address %p", &address);
     }
 
-    /* */
-    mprotect(address, getpagesize(), PROT_WRITE);
     *addr = address;
-    mprotect(address, getpagesize(), PROT_NONE);
-
     fflush(stdout);
     return;
 }

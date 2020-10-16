@@ -58,14 +58,11 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
                 memset(buffer, 0, 1024);
                 recv(c_sockets[i], buffer, 1023, 0);
 
-                /* Add the received message to the queue */
-                message_add(allocator, i, buffer);
+                /* Execute the received request */
+                status = node_execute(allocator, i, buffer);
+                if (status) return fatal("Failed to execute command");
             }
         }
-
-        /* Execute all of the messages in the queue */
-        status = node_execute(allocator);
-        if (status) return fatal("Failed to execute command");
     }
 
     allocator_end(allocator);
@@ -93,53 +90,38 @@ int node_init(allocator_t *allocator, int client) {
     return 0;
 }
 
-/*
- * The execution of command was extracted into a separate function for reuse
- * the barrier function
-*/
-int node_execute(allocator_t *allocator) {
+int node_execute(allocator_t *allocator, int nid, char request[]) {
     int status = -1;
-    request_t *request = allocator->m_queue;
 
-    /* Go through each message in the queue and execute it */
-    while (request) {
-        fprintf(stderr, "---> command: '%s'\n", request->command);
+    fprintf(stderr, "---> command: '%s'\n", request);
 
-        /* Handle sm_node_exit() */
-        if (strstr(request->command, "close")) {
-            status = node_close(allocator, request);
-        /* Handle sm_barrier() */
-        } else if (strstr(request->command, "barrier")) {
-            status = node_barrier(allocator, request);
-        /* Handle sm_malloc() */
-        } else if (strstr(request->command, "allocate")) {
-            status = node_allocate(allocator, request);
-        /* Handle sm_bcast() */
-        } else if (strstr(request->command, "cast")) {
-            status = node_cast(allocator, request);
-        /* Handle a signal */
-        } else if (strstr(request->command, "handle")) {
-            status = handle_fault(allocator, request);
-        /* Handle an invalid command received */
-        } else {
-            fprintf(stderr, "===> Failed command: '%s'\n", request->command);
-            status = fatal("Invalid message received");
-        }
-
-        request = request->next;
-        message_rm(allocator, NULL);
-
-        if (status) return status;
+    /* Handle sm_node_exit() */
+    if (strstr(request, "close")) {
+        status = node_close(allocator, nid, request);
+    /* Handle sm_barrier() */
+    } else if (strstr(request, "barrier")) {
+        status = node_barrier(allocator, nid, request);
+    /* Handle sm_malloc() */
+    } else if (strstr(request, "allocate")) {
+        status = node_allocate(allocator, nid, request);
+    /* Handle sm_bcast() */
+    } else if (strstr(request, "cast")) {
+        status = node_cast(allocator, nid, request);
+    /* Handle a signal */
+    } else if (strstr(request, "fault")) {
+        status = handle_fault(allocator, nid, request);
+    /* Handle an invalid command received */
+    } else {
+        fprintf(stderr, "===> Failed command: '%s'\n", request);
+        status = fatal("Invalid message received");
     }
 
     return status;
 }
 
-int node_close(allocator_t *allocator, request_t *request) {
-    int nid, *c_sockets;
+int node_close(allocator_t *allocator, int nid, char request[]) {
+    int *c_sockets = allocator->c_sockets;
     char buffer[1024];
-
-    nid = request->nid, c_sockets = allocator->c_sockets;
 
     /* Return a message to the node, indicating it has been closed */
     snprintf(buffer, MSG_LEN_MAX, "close ACK");
@@ -159,8 +141,8 @@ int node_close(allocator_t *allocator, request_t *request) {
  * First checks the message queue for already received messages, then receives messages
  * from each node until they send the correct message, enqueuing other messages received
 */
-int node_wait(allocator_t *allocator, request_t *request, char *message, void **ret, int root) {
-    int c_nid = request->nid, recvd = 0, mode, *c_sockets = allocator->c_sockets;
+int node_wait(allocator_t *allocator, int nid, char *message, void **ret, int root) {
+    int mode, *c_sockets = allocator->c_sockets, status;
     char buffer[1024];
 
     /* Differentiate between barrier and cast requests by the message received */
@@ -168,48 +150,28 @@ int node_wait(allocator_t *allocator, request_t *request, char *message, void **
 
     for (int i = 0; i < allocator->total_nodes; i++) {
         /* Don't check the node that initiated the request */
-        if (i == c_nid) continue;
+        if (i == nid) continue;
 
-        recvd = 0;
-        /* Check whether the message is in the message queue already */
-        for (request_t *queue = allocator->m_queue; queue; queue = queue->next) {
-            if (strstr(queue->command, message) && (i == queue->nid)) {
-                /* If it is a cast request, capture the address from the root node */
-                if (i == root && mode == 1) 
-                    sscanf(queue->command, "cast %p nid %*d root %*d", ret);
-                message_rm(allocator, queue);
-                recvd = 1;
-                break;
-            }
-        }
-
-        if (recvd) continue;
-
-        /* 
-         * Otherwise receive requests from the node until the message is received
-         * enqueueing all other messages
-         */
+        /* receive and execute requests until the correct message is found (barrier/cast) */
         while(1) {
             memset(buffer, 0, 1024);
             recv(c_sockets[i], buffer, 1023, 0);
-
             /* If the request is a barrier, go to the next node */
             if (strstr(buffer, message)) {
                 /* If it is a cast request, capture the address from the root node */
-                if (i == root && mode == 1)
-                    sscanf(buffer, "cast %p nid %*d root %*d", ret);
+                if (i == root && mode == 1) sscanf(buffer, "cast %p nid %*d root %*d", ret);
                 break;
             }
-
-            /* If the request isn't correct, enqueue it */
-            message_add(allocator, i, buffer);
+            /* If the request isn't correct, execute it */
+            status = node_execute(allocator, i, buffer);
+            if (status) return fatal("failed to exit command");
         }
     }
 
     return 0;
 }
 
-int node_barrier(allocator_t *allocator, request_t *request) {
+int node_barrier(allocator_t *allocator, int nid, char request[]) {
     char buffer[1024] = "\0";
     int *c_sockets = allocator->c_sockets, status = 0;
 
@@ -217,7 +179,7 @@ int node_barrier(allocator_t *allocator, request_t *request) {
      * The functionality to wait for all of the nodes to send a message
      * before continuing was extracted into a separate function to be reused for sm_bcast
     */
-    status = node_wait(allocator, request, "barrier", NULL, 0);
+    status = node_wait(allocator, nid, "barrier", NULL, 0);
     if (status) return fatal("node wait failed");
 
     /* Once all of the nodes have completed the barrier, send them a ACK */
@@ -229,15 +191,15 @@ int node_barrier(allocator_t *allocator, request_t *request) {
     return 0;
 }
 
-int node_allocate(allocator_t *allocator, request_t *request) {
-    int nid, offset, client = allocator->c_sockets[request->nid];
+int node_allocate(allocator_t *allocator, int nid, char request[]) {
+    int offset, client = allocator->c_sockets[nid];
     char buffer[1024] = "\0";
     size_t size;
-    alloc_t *allocation = malloc(sizeof(alloc_t));
-    page_t *page;
+    alloc_t *alloc = malloc(sizeof(alloc_t));
+    page_t  *page;
 
-    /* Find which node is allocating, and how much memory they need */
-    sscanf(request->command, "allocate node %d size %ld", &nid, &size);
+    /* Find how much memory the node is requiring */
+    sscanf(request, "allocate node %*d size %ld", &size);
 
     /* Find a memory page for the allocation to be stored on */
     for (int i = 0; i < 0xFFFF; i++) {
@@ -246,37 +208,40 @@ int node_allocate(allocator_t *allocator, request_t *request) {
         /* Check the page has enough unallocated memory to satisfy the request */
         if ((page->allocated + size) <= getpagesize()) {
             /* Create the memory allocation data */
-            allocation->writer     = nid;
-            allocation->readers    = malloc(allocator->total_nodes * sizeof(int));
-            allocation->readers[0] = nid;
-            allocation->readers[1] = -1;
-            allocation->size       = size;
-            allocation->offset     = page->allocated;
+            alloc->writer     = nid;
+            alloc->size       = size;
+            alloc->offset     = page->allocated;
 
-            page->allocated += allocation->size;
+            page->allocated += alloc->size;
+            page->allocs[page->n_allocs++] = alloc;
             break;
         }
     }
 
-    snprintf(buffer, 0x20, "offset %d", page->offset + allocation->offset);
+    /* Return a message informing the client of the offset their allocation will be at */
+    snprintf(buffer, 0x20, "offset %d", page->offset + alloc->offset);
     send(client, buffer, strlen(buffer), 0);
+
+    /* Write the action to the log file */
+    if (allocator->log_file)
+        fprintf(allocator->log_file, "#%d: allocated %d-%d\n", nid, page->offset, alloc->offset);
 
     return 0;
 }
 
-int node_cast(allocator_t *allocator, request_t *request) {
+int node_cast(allocator_t *allocator, int nid, char request[]) {
     void *address;
     char buffer[1024];
-    int nid, root, *c_sockets = allocator->c_sockets, status = 0;
+    int root, status, *c_sockets = allocator->c_sockets;
 
     /* Read the message to find the node the correct address is stored in */
-    sscanf(request->command, "cast %p nid %d root %d", &address, &nid, &root);
+    sscanf(request, "cast %p nid %*d root %d", &address, &root);
 
     /*
      * The functionality to wait for all of the nodes to send a message
      * before continuing was extracted into a separate function to be reused for sm_barrier
     */
-    status = node_wait(allocator, request, "cast", &address, root);
+    status = node_wait(allocator, nid, "cast", &address, root);
     if (status) return fatal("node wait failed");
 
     /* All of the nodes have hit the cast, so send back the new value */
@@ -291,87 +256,39 @@ int node_cast(allocator_t *allocator, request_t *request) {
     return 0;
 }
 
-int handle_fault(allocator_t *allocator, request_t *request) {
-    int nid, offset, page_offset, alloc_offset, page_owner, value;
+int handle_fault(allocator_t *allocator, int nid, char request[]) {
+    int offset, page_offset, alloc_offset, page_owner, value;
     char buffer[1024];
-    alloc_t *allocation;
+    alloc_t *alloc;
+
+    sscanf(request, "read fault: node %*d offset %d", &offset);
 
     /* The offset within the page*/
     alloc_offset = offset % getpagesize();
     /* The page number */
     page_offset  = (offset - alloc_offset) / getpagesize();
     /* Get the allocation from the page list */
-    allocation = allocator->page_list[page_offset]->allocs[alloc_offset];
+    alloc = allocator->page_list[page_offset]->allocs[alloc_offset];
 
     /* Find who has write permissions for the page (most up-to-date value) */
-    page_owner = allocation->writer;
+    page_owner = alloc->writer;
 
     /* Message the owner of the chunk and request it's value */
     snprintf(buffer, 1023, "request %d", offset);
     send(allocator->c_sockets[page_owner], buffer, strlen(buffer), 0);
-    
+
+    memset(buffer, 0, 1024);
     /* Receive the value from the owner */
     recv(allocator->c_sockets[page_owner], buffer, 1023, 0);
-    
+
+    fprintf(stderr, "value received: %s\n", buffer);
+
+    sscanf(buffer, "value %d", &value);
+    snprintf(buffer, 1023, "size %d, value %d", alloc->size, value);
     /* Send this to the node that triggered the fault */
     send(allocator->c_sockets[nid], buffer, strlen(buffer), 0);
 
     return 0;
-}
-
-
-
-
-int message_add(allocator_t *allocator, int nid, char buffer[]) {
-    request_t *new, *last;
-
-    /* Create the new message */
-    new = malloc(sizeof(request_t));
-    new->nid     = nid;
-    new->command = strndup(buffer, MSG_LEN_MAX);
-    new->next    = NULL;
-    new->prev    = NULL;
-
-    /* Create the new queue if no messages */
-    if (allocator->m_queue == NULL) {
-        allocator->m_queue = new;
-        allocator->m_last  = new;
-    /* Otherwise add it to the queue */
-    } else {
-        last = allocator->m_last;
-        last->next = new;
-        new->prev  = last;
-        allocator->m_last  = new;
-    }
-    
-    return 0;
-}
-
-/* 
- * Remove the given message from the message queue, if the 
- * provided message is NULL, remove from the front of the queue
- */
-int message_rm(allocator_t *allocator, request_t *request) {
-    /* Remove a request from the middle of the queue (used for barriers/casts) */
-    if (request) {
-        if (request->prev) request->prev->next = request->next;
-        if (request->next) request->next->prev = request->prev;
-        if (allocator->m_queue == request) allocator->m_queue = request->next;
-    /* Remove from the front of the queue */
-    } else {
-        request = allocator->m_queue;
-        allocator->m_queue = request->next;
-        if (allocator->m_queue) {
-            allocator->m_queue->prev = NULL;
-        }
-    }
-
-    if (allocator->m_queue == NULL) allocator->m_last = NULL;
-
-    free(request->command);
-    free(request);
-
-    return 0; 
 }
 
 int allocator_init(metadata_t *metadata, allocator_t *allocator) {
@@ -385,8 +302,6 @@ int allocator_init(metadata_t *metadata, allocator_t *allocator) {
     page_t **page_list = malloc(0xFFFF * sizeof(page_t *));
     for (int i = 0; i < 0xFFFF; i++) {
         page_list[i] = malloc(sizeof(page_t));
-        page_list[i]->mapped    = malloc(allocator->total_nodes * sizeof(int));
-        page_list[i]->mapped[0] = -1;
         page_list[i]->offset    = i * getpagesize();
         page_list[i]->allocated = 0;
         page_list[i]->n_allocs  = 0;
@@ -399,9 +314,13 @@ int allocator_init(metadata_t *metadata, allocator_t *allocator) {
     for (int i = 0; i < allocator->total_nodes; i++)
         allocator->c_sockets[i] = 0;
 
-    /* Create the message queue for the sockets requests */
-    allocator->m_queue = NULL;
-    allocator->m_last  = NULL;
+    /* Create/initiailze the log file */
+    if (metadata->log_file) {
+        allocator->log_file = fopen(metadata->log_file, "w+");
+        fprintf(allocator->log_file, "-= %d node processes\n", allocator->total_nodes);
+    } else {
+        allocator->log_file = NULL;
+    }
 
     /* Create the communication socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -429,12 +348,9 @@ int allocator_end(allocator_t *allocator) {
 
     /* Free the page list  */
     for (int i = 0; i < 0xFFFF; i++) {
-        for (int j = 0; j < page_list[i]->n_allocs; j++) {
-            free(page_list[i]->allocs[j]->readers);
+        for (int j = 0; j < page_list[i]->n_allocs; j++)
             free(page_list[i]->allocs[j]);
-        }
         free(page_list[i]->allocs);
-        free(page_list[i]->mapped);
         free(page_list[i]);
     }
     free(page_list);
@@ -442,6 +358,7 @@ int allocator_end(allocator_t *allocator) {
     /* Free the list of client sockets */
     free(allocator->c_sockets);
 
+    if (allocator->log_file) fclose(allocator->log_file);
     close(allocator->socket);
 
     return 0;
