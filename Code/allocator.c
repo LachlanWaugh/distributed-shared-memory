@@ -23,12 +23,8 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
     struct sockaddr_in address;
     fd_set fds;
     int status, max_sock, activity, client, addrlen = sizeof(address),
-        *c_sockets = malloc(allocator->total_nodes * sizeof(int));
+        *c_sockets = allocator->c_sockets;
     char buffer[1024] = "\0";
-
-    /* Initialize all the client sockets to 0 */
-    for (int i = 0; i < allocator->total_nodes; i++) c_sockets[i] = 0;
-    allocator->c_sockets = c_sockets;
 
     /* First, initialize all of the client nodes' sockets */
     while (allocator->n_nodes < allocator->total_nodes) {
@@ -41,7 +37,7 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
         if (status < 0) return fatal("Node initialization failed");
     }
 
-    /* 
+    /*
      * Wait for messages from the clients to come in, running 
      * until all nodes have been closed
     */
@@ -61,10 +57,9 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
             if (FD_ISSET(c_sockets[i], &fds)) {
                 memset(buffer, 0, 1024);
                 recv(c_sockets[i], buffer, 1023, 0);
+
                 /* Add the received message to the queue */
                 message_add(allocator, i, buffer);
-
-                fprintf(stderr, "---> node: %d command: '%s'\n", c_sockets[i], buffer);
             }
         }
 
@@ -108,7 +103,8 @@ int node_execute(allocator_t *allocator) {
 
     /* Go through each message in the queue and execute it */
     while (request) {
-        fprintf(stderr, "%s\n", request->command);
+        fprintf(stderr, "---> command: '%s'\n", request->command);
+
         /* Handle sm_node_exit() */
         if (strstr(request->command, "close")) {
             status = node_close(allocator, request);
@@ -157,45 +153,75 @@ int node_close(allocator_t *allocator, request_t *request) {
     return 0;
 }
 
-int node_barrier(allocator_t *allocator, request_t *request) {
-    char buffer[1024] = "\0";
-    int *c_sockets = allocator->c_sockets, c_nid = request->nid;
+/* 
+ * Wait for each node to have sent the correct message (either barrier() or bm_cast())
+ * 
+ * First checks the message queue for already received messages, then receives messages
+ * from each node until they send the correct message, enqueuing other messages received
+*/
+int node_wait(allocator_t *allocator, request_t *request, char *message, void **ret, int root) {
+    int c_nid = request->nid, recvd = 0, mode, *c_sockets = allocator->c_sockets;
+    char buffer[1024];
 
-    /*
-     * Wait for all clients to have sent a barrier request, completing their
-     * pre-existing tasks to synchronise the nodes
-    */
+    /* Differentiate between barrier and cast requests by the message received */
+    mode = (strcmp(message, "barrier")) ? 1 : 0;
+
     for (int i = 0; i < allocator->total_nodes; i++) {
-        /* Don't check the client that initiated the barrier */
-        if (i == c_nid)          continue;
-        if (c_sockets[i] == 0)   continue;
+        /* Don't check the node that initiated the request */
+        if (i == c_nid) continue;
 
-        request_t *request;
-        /* Check whether the barrier is in the message queue already */
-        for (request_t *request = allocator->m_queue; request; 
-            request = request->next) {
-            if (strstr(request->command, "barrier")) {
-                message_rm(allocator, request);
+        recvd = 0;
+        /* Check whether the message is in the message queue already */
+        for (request_t *queue = allocator->m_queue; queue; queue = queue->next) {
+            if (strstr(queue->command, message) && (i == queue->nid)) {
+                /* If it is a cast request, capture the address from the root node */
+                if (i == root && mode == 1) 
+                    sscanf(queue->command, "cast %p nid %*d root %*d", ret);
+                message_rm(allocator, queue);
+                recvd = 1;
                 break;
             }
         }
 
-        /* Otherwise receive requests from the node until the barrier */
+        if (recvd) continue;
+
+        /* 
+         * Otherwise receive requests from the node until the message is received
+         * enqueueing all other messages
+         */
         while(1) {
             memset(buffer, 0, 1024);
             recv(c_sockets[i], buffer, 1023, 0);
 
             /* If the request is a barrier, go to the next node */
-            if (strstr(buffer, "barrier")) break;
+            if (strstr(buffer, message)) {
+                /* If it is a cast request, capture the address from the root node */
+                if (i == root && mode == 1)
+                    sscanf(buffer, "cast %p nid %*d root %*d", ret);
+                break;
+            }
 
-            /* If the request isn't a barrier, enqueue it */
+            /* If the request isn't correct, enqueue it */
             message_add(allocator, i, buffer);
         }
     }
 
+    return 0;
+}
+
+int node_barrier(allocator_t *allocator, request_t *request) {
+    char buffer[1024] = "\0";
+    int *c_sockets = allocator->c_sockets, status = 0;
+
+    /*
+     * The functionality to wait for all of the nodes to send a message
+     * before continuing was extracted into a separate function to be reused for sm_bcast
+    */
+    status = node_wait(allocator, request, "barrier", NULL, 0);
+    if (status) return fatal("node wait failed");
+
     /* Once all of the nodes have completed the barrier, send them a ACK */
     for (int i = 0; i < allocator->total_nodes; i++) {
-        if (c_sockets[i] == 0) continue;
         snprintf(buffer, 1024, "barrier ACK");
         send(c_sockets[i], buffer, strlen(buffer), 0);
     }
@@ -211,7 +237,7 @@ int node_allocate(allocator_t *allocator, request_t *request) {
     page_t *page;
 
     /* Find which node is allocating, and how much memory they need */
-    sscanf(buffer, "allocate node %d size %ld", &nid, &size);
+    sscanf(request->command, "allocate node %d size %ld", &nid, &size);
 
     /* Find a memory page for the allocation to be stored on */
     for (int i = 0; i < 0xFFFF; i++) {
@@ -241,24 +267,17 @@ int node_allocate(allocator_t *allocator, request_t *request) {
 int node_cast(allocator_t *allocator, request_t *request) {
     void *address;
     char buffer[1024];
-    int nid, root, *c_sockets = allocator->c_sockets, c_nid = request->nid;
+    int nid, root, *c_sockets = allocator->c_sockets, status = 0;
 
-    /*  */
-    sscanf(buffer, "cast %p nid %d root %d", &address, &nid, &root);
+    /* Read the message to find the node the correct address is stored in */
+    sscanf(request->command, "cast %p nid %d root %d", &address, &nid, &root);
 
-    /* Find the correct address from the messages received from the nodes */
-    for (int i = 0; i < allocator->total_nodes; i++) {
-        /* The node that initiated the bm_cast won't be sending another message */
-        if (i == c_nid) continue;
-
-        /* First check the */
-
-        /* Find the address sent by the root_nid */
-        recv(c_sockets[i], buffer, 1023, 0);
-        if (i == root) {
-            sscanf(buffer, "cast %p nid %*d root %*d", &address);
-        }
-    }
+    /*
+     * The functionality to wait for all of the nodes to send a message
+     * before continuing was extracted into a separate function to be reused for sm_barrier
+    */
+    status = node_wait(allocator, request, "cast", &address, root);
+    if (status) return fatal("node wait failed");
 
     /* All of the nodes have hit the cast, so send back the new value */
     for (int i = 0; i < allocator->total_nodes; i++) {
@@ -290,11 +309,9 @@ int handle_fault(allocator_t *allocator, request_t *request) {
     /* Message the owner of the chunk and request it's value */
     snprintf(buffer, 1023, "request %d", offset);
     send(allocator->c_sockets[page_owner], buffer, strlen(buffer), 0);
-
+    
     /* Receive the value from the owner */
     recv(allocator->c_sockets[page_owner], buffer, 1023, 0);
-    
-    fprintf(stderr, "received buffer: %s\n", buffer);
     
     /* Send this to the node that triggered the fault */
     send(allocator->c_sockets[nid], buffer, strlen(buffer), 0);
@@ -303,8 +320,10 @@ int handle_fault(allocator_t *allocator, request_t *request) {
 }
 
 
+
+
 int message_add(allocator_t *allocator, int nid, char buffer[]) {
-    request_t *new;
+    request_t *new, *last;
 
     /* Create the new message */
     new = malloc(sizeof(request_t));
@@ -316,10 +335,13 @@ int message_add(allocator_t *allocator, int nid, char buffer[]) {
     /* Create the new queue if no messages */
     if (allocator->m_queue == NULL) {
         allocator->m_queue = new;
+        allocator->m_last  = new;
     /* Otherwise add it to the queue */
     } else {
-        new->next = allocator->m_queue;
-        allocator->m_queue = new;
+        last = allocator->m_last;
+        last->next = new;
+        new->prev  = last;
+        allocator->m_last  = new;
     }
     
     return 0;
@@ -330,14 +352,21 @@ int message_add(allocator_t *allocator, int nid, char buffer[]) {
  * provided message is NULL, remove from the front of the queue
  */
 int message_rm(allocator_t *allocator, request_t *request) {
+    /* Remove a request from the middle of the queue (used for barriers/casts) */
     if (request) {
         if (request->prev) request->prev->next = request->next;
         if (request->next) request->next->prev = request->prev;
+        if (allocator->m_queue == request) allocator->m_queue = request->next;
+    /* Remove from the front of the queue */
     } else {
         request = allocator->m_queue;
-        if (request->next) request->next->prev = NULL;
         allocator->m_queue = request->next;
+        if (allocator->m_queue) {
+            allocator->m_queue->prev = NULL;
+        }
     }
+
+    if (allocator->m_queue == NULL) allocator->m_last = NULL;
 
     free(request->command);
     free(request);
@@ -365,8 +394,14 @@ int allocator_init(metadata_t *metadata, allocator_t *allocator) {
     }
     allocator->page_list = page_list;
 
+    /* Initialize all the client sockets to 0 */
+    allocator->c_sockets = malloc(allocator->total_nodes * sizeof(int));
+    for (int i = 0; i < allocator->total_nodes; i++)
+        allocator->c_sockets[i] = 0;
+
     /* Create the message queue for the sockets requests */
     allocator->m_queue = NULL;
+    allocator->m_last  = NULL;
 
     /* Create the communication socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -403,8 +438,6 @@ int allocator_end(allocator_t *allocator) {
         free(page_list[i]);
     }
     free(page_list);
-
-    free(allocator->m_queue);
 
     /* Free the list of client sockets */
     free(allocator->c_sockets);

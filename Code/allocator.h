@@ -37,8 +37,10 @@ typedef struct allocator_information {
     int        total_nodes; /* The total number of nodes to run */
     int        socket;      /* The socket used to receive connections */
     int       *c_sockets;   /* All of the connected client sockets */
+    int        n_blocked    /* The number of */
     page_t   **page_list;   /* The pages in the shared memory map */
     request_t *m_queue;     /* A linked list of all of the node requests */
+    request_t *m_last;      /* The last message in the queue */
 } allocator_t;
 
 int allocator_init(metadata_t *metadata, allocator_t *allocator);

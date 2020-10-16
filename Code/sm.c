@@ -30,7 +30,7 @@ void sm_handler(int signum, siginfo_t *si, void *ctx) {
 
     /* Find the offset of the variable from the memory base */
     long offset = (char *) si->si_addr - sm_map;
-    
+
     /* Send a message to the allocator to find the value at the address */
     snprintf(buffer, 1023, "handle read: node %d offset %ld |", sm_nid, offset);
     send(sm_sock, buffer, strlen(buffer), 0);
