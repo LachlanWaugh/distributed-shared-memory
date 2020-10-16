@@ -29,8 +29,6 @@ void sm_segv(int signum, siginfo_t *si, void *ctx) {
     char buffer[1024] = "\0";
     int value, size;
 
-    fprintf(stderr, "ERROR: %d %p\n", sm_nid, si->si_addr);
-
     /* Find the offset of the variable from the memory base */
     long offset = (char *) si->si_addr - sm_map;
 
@@ -54,7 +52,6 @@ void sm_poll(int signum) {
     int offset, size;
 
     recv(sm_sock, buffer, 1023, MSG_PEEK);
-
     /* Handle a read request for a memory address */
     if (strstr(buffer, "request")) {
         recv(sm_sock, buffer, 1023, 0);
@@ -115,15 +112,15 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     /* enable SIGPOLL on the socket */
     fcntl(sock, F_SETFL, O_ASYNC);
     fcntl(sock, F_SETOWN, getpid());
-    /* Create the handler for SIGPOLL */
-    struct sigaction sa_poll;
-    sa_poll.sa_handler  = sm_poll;
-    sa_poll.sa_flags    = SA_RESTART;
-    sigemptyset(&sa_poll.sa_mask);
-    sigaction(SIGPOLL, &sa_poll, NULL);
 
-    /* Create the signal handler */
+    /* Create the handler for POLL */
     struct sigaction sa;
+    sa.sa_handler = sm_poll;
+    sa.sa_flags   = SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGIO, &sa, NULL);
+
+    /* Create the handler for SEGV */
     sa.sa_sigaction = sm_segv;
     sa.sa_flags     = SA_SIGINFO|SA_RESTART;
     sigemptyset(&sa.sa_mask);
@@ -167,7 +164,7 @@ void *sm_malloc (size_t size) {
         sm_fatal("failed to send alloc to allocator");
         return NULL;
     }
-        
+
     memset(buffer, 0, 1024);
     /* Wait for an memory offset message */
     status = recv(sm_sock, buffer, 1023, 0);
@@ -195,11 +192,15 @@ void sm_barrier (void) {
         sm_fatal("failed to send barrier to allocator");
     } else {
         /* Wait for an acknowledgement */
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) {
-            sm_fatal("failed to receive barrier acknowledgement");
-        } else if (strcmp(buffer, "barrier ACK")) {
-            sm_fatal("invalid barrier acknowledgement received");
+        while(1) {
+            status = recv(sm_sock, buffer, 1023, MSG_PEEK);
+            if (status <= 0) {
+                sm_fatal("failed to receive barrier acknowledgement");
+                break;
+            } else if (strcmp(buffer, "barrier ACK") == 0) {
+                recv(sm_sock, buffer, 1023, 0);
+                break;
+            }
         }
     }
 

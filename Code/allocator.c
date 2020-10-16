@@ -269,7 +269,6 @@ int handle_fault(allocator_t *allocator, int nid, char request[]) {
     page_offset  = (offset - alloc_offset) / getpagesize();
     /* Get the allocation from the page list */
     alloc = allocator->page_list[page_offset]->allocs[alloc_offset];
-
     /* Find who has write permissions for the page (most up-to-date value) */
     page_owner = alloc->writer;
 
