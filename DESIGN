@@ -1,1 +1,37 @@
-TODO
+﻿
+dsm.c
+    This file mostly just stored the setup functionality, when invoked it would process all of the command-line options and store these in a struct named metadata_t (defined in sm.h). After reading the command line options it would then start each of the nodes by using fork() and ssh.
+
+    After all of the nodes were started, dsm would pass execution over to allocator.c.
+
+allocator.c
+    This file did all of the actual allocation of memory, it created the server to handle communication between the node and allocator.
+
+    All of the the communication came in through the sockets, client requestts would be passed to node_execute() which would then pass them on to the correct function to handle the request.
+
+    The sockets were stored in an array which would be interated over, and were asynchronous due to the use of select().
+
+    The memory allocation was handled by using the struct page_t (defined in allocator.h) this would store information about the offset of the page from the memory base, and which nodes had read/write permissions for the page (used for segfaults/write invalidations). Each page also had a number of allocations which were stored in it, these just represent the malloc calls.
+
+    All of the information was stored in the struct allocator_t (defined in allocator.h)
+
+    I struggled a lot with how to handle the segfault capturing, as when requesting a node to pass back a page it would often have another message waiting on the socket. For this reason I attempted to use a message queue struct msg_t (defined in allocator.h) this would just store messages they weren't ready to be executed yet, when returning back to the select it would clear out the message queue before accepting new requests.
+
+    I think the way that I implemented the barrier function could have done some work, in retrospect I think that it would have been better if I just had some array that represented values that were currently blocked in a barrier (in the allocator) and would ignore those when deciding which clients sockets to read from. Instead when barrier was invoked it would go into a loop accepting requests from each client until they reached the barrier. (this is also the same for the cast, it would just wait until all clients had participated in the cast and take the correct address from the root client)
+
+sm.c
+    Most of the work was completed in the allocator functionality, sm.c was mostly just sending messages and waiting for replies.
+
+    The signal handling was based upon what was provided in the examples, using the sigaction struct. I wasn't able work out how to differentiate whether a segfault had come from writing or reading, so I wasn't able to capture and correct write fault.
+
+    I really struggled with the signal handling part of the implementation, I hadn't really done any of it prior to this course (I did a networking course at a different school and got credit transfer, but we never did anything with Linux sockets/signals).
+
+    I wasn't able to determine how to fix the segfaults, however I believe that I was very close.
+
+Contribution
+    I believe both members of my group dropped the course.
+    Bowen did nothing. William did part of Milestone 1 before dropping.
+
+    I'm very sorry that it was so late, I underestimated the amount of work that was required for this subject, and having no group members meant that I had nobody to point out many stupid mistakes that I was making so everything took significantly longer than it should have.
+
+    My next assignment will be of much higher quality, and be sent much closer to the deadline.
