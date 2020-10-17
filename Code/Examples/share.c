@@ -49,9 +49,6 @@ int main (int argc, char *argv[]) {
     if (0 != nid)
         printf ("node %d: Value in 1st shared variable is %d\n", nid, *sharedChar);
 
-    sm_node_exit();
-    return 0;
-
     /* Checkpoint B */
     sm_barrier ();
 

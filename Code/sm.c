@@ -18,8 +18,7 @@ char *sm_map;
 
 int sm_fatal(char *message) {
     fprintf(stderr, "Error: %s.\n", message);
-    if (sm_sock != 0)
-        close(sm_sock);
+    if (sm_sock != 0) close(sm_sock);
 
     fflush(stdout);
     return -1;
@@ -48,29 +47,37 @@ void sm_segv(int signum, siginfo_t *si, void *ctx) {
 }
 
 void sm_poll(int signum) {
-    char buffer[1024] = "\0";
-    int offset, size;
-
+    char buffer[4196] = "\0";
+    int offset, status;
+ 
     recv(sm_sock, buffer, 1023, MSG_PEEK);
+
     /* Handle a read request for a memory address */
-    if (strstr(buffer, "request")) {
-        recv(sm_sock, buffer, 1023, 0);
+    if (strstr(buffer, "request read")) {
+        status = recv(sm_sock, buffer, 1023, 0);
+        if (status <= 0) sm_fatal("failed to receive read request");
         sscanf(buffer, "request %d", &offset);
-        
-        /* Send the request value back */
-        snprintf(buffer, 1023, "value %d", *(sm_map + offset));
-        send(sm_sock, buffer, strlen(buffer), 0);
+
+        /* Send the request page back */
+        snprintf(buffer, 4096 + 6, "page: %s", sm_map + offset);
+        status = send(sm_sock, buffer, strlen(buffer), 0);
+        if (status <= 0) sm_fatal("failed to send page to allocator");
 
     /* Handle a loss of write permissions */
-    } else if (strstr(buffer, "invalidate")) {
-        recv(sm_sock, buffer, 1023, 0);
-        sscanf(buffer, "invalidate %d size %d", &offset, &size);
-        
+    } else if (strstr(buffer, "request write")) {
+        status = recv(sm_sock, buffer, 1023, 0);
+        if (status <= 0) sm_fatal("failed to receive write request");
+        sscanf(buffer, "write request: %d", &offset);
+
         /* Invalidate the required memory and send an acknowledgement */
-        mprotect(sm_map + offset, size, PROT_NONE);
+        mprotect(sm_map + offset, getpagesize(), PROT_NONE);
+
         snprintf(buffer, 1023, "invalidate ACK");
-        send(sm_sock, buffer, strlen(buffer), 0);
+        status = send(sm_sock, buffer, strlen(buffer), 0);
+        if (status <= 0) sm_fatal("failed to send invalidation acknowledgement to allocator");
     }
+
+    return;
 }
 
 int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
@@ -174,7 +181,7 @@ void *sm_malloc (size_t size) {
     }
 
     sscanf(buffer, "offset %d", &offset);
-    mprotect(sm_map + offset, size, PROT_READ|PROT_WRITE);
+    mprotect(sm_map + offset, getpagesize(), PROT_READ|PROT_WRITE);
     memset(sm_map+offset, 0, size);
 
     fflush(stdout);
