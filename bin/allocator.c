@@ -53,7 +53,8 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
 
         /*
          * Check the message queue to make sure there aren't any pending messages 
-         * this is used in the fault handler
+         * this is used in the fault handler to receive the value of a page without losing
+         * messages from clients that have already been sent
         */
         for (msg_t *msg = allocator->m_queue; allocator->m_queue; dequeue(allocator)) {
             status = node_execute(allocator, msg->nid, msg->request);
@@ -61,7 +62,7 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
         }
 
         activity = select(max_sock+1, &fds, NULL, NULL, NULL);
-        /* Read messages coming in from the existing nodes */
+        /* Check each client to see if they have any pending requests */
         for (int i = 0; i < allocator->total_nodes; i++) {
             if (FD_ISSET(c_sockets[i], &fds)) {
                 memset(buffer, 0, 1024);
@@ -79,6 +80,7 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
     return 0;
 }
 
+/* Initialize the connection between the allocator and the client node */
 int node_init(allocator_t *allocator, int client) {
     char buffer[1024];
 
@@ -99,6 +101,7 @@ int node_init(allocator_t *allocator, int client) {
     return 0;
 }
 
+/* Pass the received command from the client to the correct function to execute it */
 int node_execute(allocator_t *allocator, int nid, char request[]) {
     int status = -1;
 
@@ -128,6 +131,7 @@ int node_execute(allocator_t *allocator, int nid, char request[]) {
     return status;
 }
 
+/* Remove the memory allocated to a node and close it's socket */
 int node_close(allocator_t *allocator, int nid, char request[]) {
     int *c_sockets = allocator->c_sockets;
     char buffer[1024];
@@ -144,12 +148,7 @@ int node_close(allocator_t *allocator, int nid, char request[]) {
     return 0;
 }
 
-/* 
- * Wait for each node to have sent the correct message (either barrier() or bm_cast())
- * 
- * First checks the message queue for already received messages, then receives messages
- * from each node until they send the correct message, enqueuing other messages received
-*/
+/* Wait for each node to have sent the correct message (either barrier() or bm_cast() */
 int node_wait(allocator_t *allocator, int nid, char *message, void **ret, int root) {
     int mode, *c_sockets = allocator->c_sockets, status;
     char buffer[1024];
@@ -204,6 +203,7 @@ int node_barrier(allocator_t *allocator, int nid, char request[]) {
     return 0;
 }
 
+/* Allocate some memory for the node and store metadata about it */
 int node_allocate(allocator_t *allocator, int nid, char request[]) {
     int offset, client = allocator->c_sockets[nid];
     char buffer[1024] = "\0";
