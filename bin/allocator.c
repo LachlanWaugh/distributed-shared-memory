@@ -100,8 +100,6 @@ int node_init(int client) {
 int node_execute(int nid, char request[]) {
     int status = -1;
 
-    fprintf(stderr, "---> command: %d '%s'\n", nid, request);
-
     /* Handle sm_node_exit() */
     if (strstr(request, "close")) {
         status = node_close(allocator, nid, request);
@@ -119,7 +117,6 @@ int node_execute(int nid, char request[]) {
         status = handle_fault(allocator, nid, request);
     /* Handle an invalid command received */
     } else {
-        fprintf(stderr, "===> Failed command: '%s'\n", request);
         status = fatal("Invalid message received");
     }
 
@@ -168,7 +165,6 @@ int node_wait(int nid, char *message, void **ret, int root) {
                 break;
             }
 
-            fprintf(stderr, "wait: '%s'\n", buffer);
             /* If the request isn't correct, execute it */
             status = node_execute(allocator, i, buffer);
             if (status) return fatal("failed to exit command");
