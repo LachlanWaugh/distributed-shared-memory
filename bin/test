@@ -1,0 +1,13 @@
+DIR=~/University/COMP9243/Assignments/distributed-shared-memory/bin
+PROG=$1
+
+cp $DIR/Examples/$PROG.c $DIR/$PROG.c
+
+gcc $PROG.c sm.c -o $PROG
+make
+
+# gdb --ex=r --args dsm -n 4 $DIR/$PROG
+./dsm -n 4 $DIR/$PROG
+
+make clean
+rm share share.c

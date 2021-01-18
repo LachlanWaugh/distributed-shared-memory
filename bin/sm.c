@@ -91,7 +91,9 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
 
     /* Create the socket to communicate with the allocator */
     sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == 0) return sm_fatal("Failed to create socket");
+    if (sock == 0) {
+        return sm_fatal("Failed to create socket");
+    }
 
     struct sockaddr_in address;
     address.sin_family = AF_INET;
@@ -100,17 +102,24 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
 
     /* Connect to the allocator to initalize the node */
     status = connect(sock, (struct sockaddr *)&address, sizeof(address));
-    if (status < 0) return sm_fatal("failed to connect socket");
+    if (status < 0) {
+        return sm_fatal("failed to connect socket");
+    }
 
     /* Send an initalization request to the dsm */
     status = send(sock, "init", 5, 0);
-    if (status < 4) return sm_fatal("failed to send initialization to allocator");
+    if (status < 4) {
+        return sm_fatal("failed to send initialization to allocator");
+    }
 
     /* Parse the received message to find the nid and nodes */
     status = recv(sock, buffer, 1023, 0);
-    if (status < 1) return sm_fatal("failed to receive initalization acknowledgement");
-    sscanf(buffer, "nid: %d, nodes: %d\n", nid, nodes);
+    if (status < 1) {
+        return sm_fatal("failed to receive initalization acknowledgement");
+    }
 
+
+    sscanf(buffer, "nid: %d, nodes: %d\n", nid, nodes);
     /* Map in the shared memory */
     sm_map = mmap((void *)0x6f0000000000, 0xFFFF * getpagesize(), 
                 PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);

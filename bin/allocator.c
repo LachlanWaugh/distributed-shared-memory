@@ -14,12 +14,7 @@
 #include "allocator.h"
 #include "dsm.h"
 
-int fatal(char *message) {
-    fprintf(stderr, "Error: %s.\n", message);
-    return -1;
-}
-
-int allocate(metadata_t *metadata, allocator_t *allocator) {
+int allocate() {
     struct sockaddr_in address;
     fd_set fds;
     int status, max_sock, activity, client, addrlen = sizeof(address),
@@ -81,7 +76,7 @@ int allocate(metadata_t *metadata, allocator_t *allocator) {
 }
 
 /* Initialize the connection between the allocator and the client node */
-int node_init(allocator_t *allocator, int client) {
+int node_init(int client) {
     char buffer[1024];
 
     /* Ensure that it is an initialization request */
@@ -102,7 +97,7 @@ int node_init(allocator_t *allocator, int client) {
 }
 
 /* Pass the received command from the client to the correct function to execute it */
-int node_execute(allocator_t *allocator, int nid, char request[]) {
+int node_execute(int nid, char request[]) {
     int status = -1;
 
     fprintf(stderr, "---> command: %d '%s'\n", nid, request);
@@ -132,7 +127,7 @@ int node_execute(allocator_t *allocator, int nid, char request[]) {
 }
 
 /* Remove the memory allocated to a node and close it's socket */
-int node_close(allocator_t *allocator, int nid, char request[]) {
+int node_close(int nid, char request[]) {
     int *c_sockets = allocator->c_sockets;
     char buffer[1024];
 
@@ -149,7 +144,7 @@ int node_close(allocator_t *allocator, int nid, char request[]) {
 }
 
 /* Wait for each node to have sent the correct message (either barrier() or bm_cast() */
-int node_wait(allocator_t *allocator, int nid, char *message, void **ret, int root) {
+int node_wait(int nid, char *message, void **ret, int root) {
     int mode, *c_sockets = allocator->c_sockets, status;
     char buffer[1024];
 
@@ -183,7 +178,7 @@ int node_wait(allocator_t *allocator, int nid, char *message, void **ret, int ro
     return 0;
 }
 
-int node_barrier(allocator_t *allocator, int nid, char request[]) {
+int node_barrier(int nid, char request[]) {
     char buffer[1024] = "\0";
     int *c_sockets = allocator->c_sockets, status = 0;
 
@@ -204,7 +199,7 @@ int node_barrier(allocator_t *allocator, int nid, char request[]) {
 }
 
 /* Allocate some memory for the node and store metadata about it */
-int node_allocate(allocator_t *allocator, int nid, char request[]) {
+int node_allocate(int nid, char request[]) {
     int offset, client = allocator->c_sockets[nid];
     char buffer[1024] = "\0";
     size_t size;
@@ -244,7 +239,7 @@ int node_allocate(allocator_t *allocator, int nid, char request[]) {
     return 0;
 }
 
-int node_cast(allocator_t *allocator, int nid, char request[]) {
+int node_cast(int nid, char request[]) {
     void *address;
     char buffer[1024];
     int root, status, *c_sockets = allocator->c_sockets;
@@ -271,7 +266,7 @@ int node_cast(allocator_t *allocator, int nid, char request[]) {
     return 0;
 }
 
-int handle_fault(allocator_t *allocator, int nid, char request[]) {
+int handle_fault(int nid, char request[]) {
     int offset, type, page_n, status;
     char buffer[4196] = "\0", type_s[100] = "\0";
     page_t *page;
@@ -326,63 +321,28 @@ int handle_fault(allocator_t *allocator, int nid, char request[]) {
     return 0;
 }
 
-int enqueue(allocator_t *allocator, int nid, char request[]) {
-    msg_t *new = malloc(sizeof(msg_t));
-    new->nid     = nid;
-    new->request = strndup(request, MSG_LEN_MAX);
-    new->next    = NULL;
-
-    if (allocator->m_queue == NULL) {
-        allocator->m_queue = new;
-    } else {
-        allocator->m_last->next = new;
-    }
-
-    allocator->m_last = new;
-}
-
-/* Remove a message from the front of the message queue */
-int dequeue(allocator_t *allocator) {
-    msg_t *old = allocator->m_queue;
-    allocator->m_queue = old->next;
-    free(old->request);
-    free(old);
-}
-
-int allocator_init(metadata_t *metadata, allocator_t *allocator) {
+int allocator_init() {
     struct sockaddr_in address;
     int status, sock, opt = 1;
 
-    allocator->n_nodes = 0;
-    allocator->total_nodes = metadata->n_proc;
+    /* */
+    for (int i = 0; i < SM_MAX_PAGES) {
+        sm_page_table[i].writer = -1;
+        sm_page_table[i].readers = malloc(options->n_nodes * sizeof(int));
 
-    /* Initialize all of the pages to unused */
-    page_t **page_list = malloc(0xFFFF * sizeof(page_t *));
-    for (int i = 0; i < 0xFFFF; i++) {
-        page_list[i] = malloc(sizeof(page_t));
-        page_list[i]->offset    = i * getpagesize();
-        page_list[i]->allocated = 0;
-
-        page_list[i]->writer = 0;
-        page_list[i]->reader = malloc(metadata->n_proc * sizeof(int));
-
-        page_list[i]->n_allocs  = 0;
-        page_list[i]->allocs    = malloc(sizeof(alloc_t *));
+        for (int j = 0; j < options->n_nodes) {
+            sm_page_table[i].readers[j] = 0;
+        }
     }
-    allocator->page_list = page_list;
-
-    /* Initialize the message queue */
-    allocator->m_queue = NULL;
-    allocator->m_last  = NULL;
 
     /* Initialize all the client sockets to 0 */
-    allocator->c_sockets = malloc(allocator->total_nodes * sizeof(int));
-    for (int i = 0; i < allocator->total_nodes; i++)
-        allocator->c_sockets[i] = 0;
+    client_sockets = malloc(options->n_nodes * sizeof(int));
+    for (int i = 0; i < options->n_nodes; i++) {
+        client_sockets[i] = 0;
+    }
 
     /* Create/initiailze the log file */
-    if (metadata->log_file) {
-        allocator->log = fopen(metadata->log_file, "w+");
+    if (options->log_file) {
         fprintf(allocator->log, "-= %d node processes\n", allocator->total_nodes);
     } else {
         allocator->log = NULL;
@@ -409,7 +369,7 @@ int allocator_init(metadata_t *metadata, allocator_t *allocator) {
     return 0;
 }
 
-int allocator_end(allocator_t *allocator) {
+int allocator_end() {
     page_t **page_list = allocator->page_list;
 
     /* Free the page list  */

@@ -1,7 +1,7 @@
 CC=gcc
-CFLAGS=-I.
-DEPEND = dsm.h sm.h allocator.h
-OBJECT = dsm.o sm.o allocator.o
+CFLAGS=-I -g.
+DEPEND = dsm.h sm.h sm_setup.h sm_message.h
+OBJECT = dsm.o sm.o sm_setup.o sm_message.o
 
 all : dsm
 .PHONY : all
