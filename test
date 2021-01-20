@@ -1,4 +1,4 @@
-DIR=~/University/COMP9243/Assignments/distributed-shared-memory/bin
+DIR=~/University/COMP9243/Assignments/distributed-shared-memory
 PROG=$1
 
 cp $DIR/Examples/$PROG.c $DIR/$PROG.c

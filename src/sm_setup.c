@@ -6,7 +6,7 @@
 #include <fcntl.h>
 
 #include "sm_setup.h"
-#include "dsm.h"
+#include "config.h"
 
 int setup(int argc, char **argv) {
     int result = 0;
@@ -37,8 +37,6 @@ int initialize() {
     }
 
     options->prog_args = NULL;
-
-    sm_node_count = 0;
 
     return 0;
 }
@@ -170,7 +168,7 @@ int node_start() {
     char command[SM_LEN_MAX], buffer[SM_LEN_MAX];
 
     /* Loop around when insufficient numbers of hosts */
-    host_index = 0; //(sm_node_count - 1) % options->n_hosts;
+    host_index = (sm_node_count - 1) % options->n_nodes;
 
     /* write the command to be executed on the target device */
     status = snprintf(command, SM_LEN_MAX, "ssh %s %s", options->host_names[host_index], options->program);

@@ -1,12 +1,11 @@
 #include <stdlib.h>
-#include "dsm.h"
 
 #ifndef _ALLOCATOR_H
 #define _ALLOCATOR_H
 
 int allocator_init();
-int allocate      ();
 int allocator_end ();
+int allocate      ();
 
 int node_init    (int client);
 int node_wait    (int nid, char *message, void **ret, int root);

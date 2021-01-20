@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 
 #include "sm_message.h"
+#include "config.h"
 
 /*
  * Return 0 if all bytes are successfully sent, otherwise returns 1
@@ -28,6 +29,9 @@ msg_t *sm_recv(int socket) {
 
     /* Receive the message header */
     int status = recv(socket, message->buffer, HEADER_LEN, MSG_WAITALL);
+    if (status == 0) {
+        return NULL;
+    }
 
     /* Extract the metadata from the received message */
     message->type = message->buffer[0];

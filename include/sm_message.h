@@ -1,5 +1,5 @@
 #include <stdlib.h>
- 
+
 /*  */
 typedef struct sm_message {
     char type; /* The type of message */
@@ -9,6 +9,7 @@ typedef struct sm_message {
 } msg_t;
 
 #define HEADER_LEN 3 /* message_header = {message.type, message.len, message.nid} */
+#define SM_MSG_MAX 128
 
 /* 
  * The identifiers for messages (the type in the above struct)

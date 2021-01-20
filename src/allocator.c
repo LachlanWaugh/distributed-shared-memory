@@ -12,7 +12,76 @@
 #include <fcntl.h>
 
 #include "allocator.h"
-#include "dsm.h"
+#include "config.h"
+
+int allocator_init() {
+    struct sockaddr_in address;
+    int status, sock, opt = 1;
+
+    /*  */
+    for (int i = 0; i < SM_MAX_PAGES; i++) {
+        sm_page_table[i].writer = -1;
+        sm_page_table[i].readers = malloc(options->n_nodes * sizeof(int));
+
+        for (int j = 0; j < options->n_nodes) {
+            sm_page_table[i].readers[j] = 0;
+        }
+    }
+
+    /* Initialize all the client sockets to 0 */
+    client_sockets = malloc(options->n_nodes * sizeof(int));
+    for (int i = 0; i < options->n_nodes; i++) {
+        client_sockets[i] = 0;
+    }
+
+    /*  */
+    if (options->log_file) {
+        fprintf(options->log_file, "-= %d node processes\n", options->n_nodes);
+    } else {
+        options->log_file = NULL;
+    }
+
+    /* Prepare the shared memory mapping and information */
+    sm_memory_map = mmap();
+    sm_node_count = 0;
+
+    /* Create the communication socket */
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == 0) return fatal("failed to create socket");
+    sm_socket = sock;
+
+    address.sin_family      = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port        = htons(PORT);
+
+    status = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+    if (status < 0) return fatal("failed setting socket options");
+
+    status = bind(sock, (struct sockaddr *)&address, sizeof(address));
+    if (status < 0) return fatal("failed to bind socket");
+
+    status = listen(sock, options->n_nodes);
+    if (status < 0) return fatal("failed to listen to socket");
+
+    return 0;
+}
+
+int allocator_end() {
+    /* Free the page list  */
+    for (int i = 0; i < SM_MAX_PAGES; i++) {
+        free(sm_page_table[i]->writers);
+    }
+
+    /* Free the list of client sockets */
+    free(client_sockets);
+
+    if (options->log_file)
+        fclose(options->log_file);
+    
+    close(sm_socket);
+
+    return 0;
+}
 
 int allocate() {
     struct sockaddr_in address;
@@ -313,75 +382,6 @@ int handle_fault(int nid, char request[]) {
     /* Send this to the node that triggered the fault */
     status = send(allocator->c_sockets[nid], buffer, strlen(buffer), 0);
     if (status <= 0) return fatal("failed to send page to node");
-
-    return 0;
-}
-
-int allocator_init() {
-    struct sockaddr_in address;
-    int status, sock, opt = 1;
-
-    /* */
-    for (int i = 0; i < SM_MAX_PAGES) {
-        sm_page_table[i].writer = -1;
-        sm_page_table[i].readers = malloc(options->n_nodes * sizeof(int));
-
-        for (int j = 0; j < options->n_nodes) {
-            sm_page_table[i].readers[j] = 0;
-        }
-    }
-
-    /* Initialize all the client sockets to 0 */
-    client_sockets = malloc(options->n_nodes * sizeof(int));
-    for (int i = 0; i < options->n_nodes; i++) {
-        client_sockets[i] = 0;
-    }
-
-    /* Create/initiailze the log file */
-    if (options->log_file) {
-        fprintf(allocator->log, "-= %d node processes\n", allocator->total_nodes);
-    } else {
-        allocator->log = NULL;
-    }
-
-    /* Create the communication socket */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == 0) return fatal("failed to create socket");
-    allocator->socket = sock;
-
-    address.sin_family      = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port        = htons(PORT);
-
-    status = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
-    if (status < 0) return fatal("failed setting socket options");
-
-    status = bind(sock, (struct sockaddr *)&address, sizeof(address));
-    if (status < 0) return fatal("failed to bind socket");
-
-    status = listen(sock, metadata->n_proc);
-    if (status < 0) return fatal("failed to listen to socket");
-
-    return 0;
-}
-
-int allocator_end() {
-    page_t **page_list = allocator->page_list;
-
-    /* Free the page list  */
-    for (int i = 0; i < 0xFFFF; i++) {
-        for (int j = 0; j < page_list[i]->n_allocs; j++)
-            free(page_list[i]->allocs[j]);
-        free(page_list[i]->allocs);
-        free(page_list[i]);
-    }
-    free(page_list);
-
-    /* Free the list of client sockets */
-    free(allocator->c_sockets);
-
-    if (allocator->log) fclose(allocator->log);
-    close(allocator->socket);
 
     return 0;
 }

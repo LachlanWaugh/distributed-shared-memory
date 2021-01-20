@@ -9,7 +9,6 @@
 #include "sm_message.h"
 
 int main(int argc, char **argv) {
-    struct options options;
     int result = 0;
 
     /* Read and process the command-line arguments */
@@ -18,15 +17,14 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    // /* Connect the node processes and start-up the allocator*/
-    // result = run();
-    // if (result) {
-    //     exit(EXIT_FAILURE);
-    // }
+    /* Connect the node processes and start-up the allocator*/
+    result = run();
+    if (result) {
+        exit(EXIT_FAILURE);
+    }
 
     /* De-allocate all of the memory used */
-    clean();
-
+    result = clean();
     return result;
 }
 
@@ -67,18 +65,16 @@ int clean() {
 /*
  *
  */
-int run() {
-    int status;
-    pid_t pid;
-
+int run() {    
     /* Start  the allocator to receive messages from the clients */
-    // allocator_t *allocator = malloc(sizeof(allocator_t));
-    // status = allocator_init(metadata, allocator);
-    // if (status) fatal("failed to initialize the server");
+    int status = allocator_init();
+    if (status) {
+        fatal("failed to initialize the server");
+    }
 
     /* Loop until you've created the required number of processes */
     while (sm_node_count < options->n_nodes) {
-        pid = fork();
+        pid_t pid = fork();
         sm_node_count++;
 
         /* Parent process created */
@@ -86,7 +82,7 @@ int run() {
             continue;
             /* Wait for children to finish, allocate memory */
         /* Child process created */
-        } else if (sm_node_count == 0) {
+        } else if (pid == 0) {
             /* Execute the program via ssh */
             status = node_start();
             if (status) exit(EXIT_FAILURE);
@@ -98,10 +94,5 @@ int run() {
         }
     }
 
-    return 0;
-    // return allocate(metadata, allocator);
+    return 0; // return allocate();
 }
-
-/*
- *
- */

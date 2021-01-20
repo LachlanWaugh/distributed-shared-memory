@@ -1,8 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-
-#ifndef _SM_SETUP_H
-#define _SM_SETUP_H
 
 #define USAGE "Usage: dsm [OPTION]... EXECUTABLE-FILE NODE-OPTION...\n\n\
     -H HOSTFILE list of host names\n\
@@ -17,14 +12,19 @@ processes.  The hosts on which node processes are started are given in \
 HOSTFILE, which defaults to `hosts'.  If the file does not exist, \
 `localhost' is used.\n"
 
-#define SM_PORT      9243
-#define SM_MSG_MAX   128
-#define SM_PAGESIZE  1024
-#define SM_MAX_PAGES 1000
+#define HOSTS_MAX       16
+#define OPT_MAX         16
+#define ARG_LEN_MAX     256
+#define NAME_LEN_MAX    256
+#define COMMAND_LEN_MAX 256
+#define MSG_LEN_MAX     256
 
 #define SM_LEN_MAX 128
 #define SM_ARG_MAX 32
 #define SM_HOSTS_MAX 10
+#define SM_PAGESIZE  1024
+#define SM_MAX_PAGES 1000
+#define SM_PORT      9243
 
 /* */
 struct options {
@@ -40,21 +40,12 @@ struct options *options;
 /* */
 struct memory_page {    
     int writer;   /* The nid of the node with writer permissions (-1 if no writer) */
-    int *reader; /* Indicates if a node has read permissions (1 if so, 0 if not) */
+    int *readers; /* Indicates if a node has read permissions (1 if so, 0 if not) */
 };
 struct memory_page sm_page_table[SM_MAX_PAGES];
 
-void *sm_memory_map;   /* A cache of all of the shared memory */
-int   sm_node_count;   /* The number of active nodes */
-int   sm_sock;         /* The socket used to receive connections */
+void  *sm_memory_map;  /* A cache of all of the shared memory */
+int    sm_node_count;  /* The number of active nodes */
+int    sm_socket;      /* The socket used to receive connections */
 int   *client_sockets; /* All of the connected client sockets */
 pid_t *client_pids;    /* The PIDs of all of the clients */
-
-int initialize();
-int setup(int argc, char **argv);
-int process_arguments(int argc, char **argv);
-int process_program(int argc, char **argv, int optind);
-int read_hostfile();
-int node_start();
-
-#endif
