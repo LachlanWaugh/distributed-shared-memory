@@ -201,22 +201,19 @@ int node_execute(msg_t *request) {
     }
 }
 
-/* Wait for each node to have sent the correct message (either barrier() or bm_cast() */
-int node_wait(int nid, char *message, void **ret, int root) {
-    int mode, status;
+/* Wait for each node to have sent the correct message (either barrier() or bm_cast()) */
+int node_wait(int nid, int mode, void **ret, int root) {
+    int status;
     char buffer[1024];
 
-    /* Differentiate between barrier and cast requests by the message received */
-    mode = (strcmp(message, "barrier")) ? 1 : 0;
-
-    for (int i = 0; i < allocator->total_nodes; i++) {
+    for (int i = 0; i < options->n_nodes; i++) {
         /* Don't check the node that initiated the request */
         if (i == nid) continue;
 
         /* receive and execute requests until the correct message is found (barrier/cast) */
         while(1) {
             memset(buffer, 0, 1024);
-            status = recv(c_sockets[i], buffer, 1023, 0);
+            status = sm_recv(client_sockets[i]);
             if (status <= 0) sm_fatal("wait: failed to receive message from socket");
 
             /* If the request is a barrier, go to the next node */
@@ -235,21 +232,23 @@ int node_wait(int nid, char *message, void **ret, int root) {
     return 0;
 }
 
+/* */
 int node_barrier(int nid, char request[]) {
     char buffer[1024] = "\0";
-    int *c_sockets = allocator->c_sockets, status = 0;
+    int status = 0;
 
     /*
      * The functionality to wait for all of the nodes to send a message
      * before continuing was extracted into a separate function to be reused for sm_bcast
     */
-    status = node_wait(allocator, nid, "barrier", NULL, 0);
-    if (status) return sm_fatal("node wait failed");
+    status = node_wait(nid, SM_BARR, NULL, 0);
+    if (status) {
+        return sm_fatal("node wait failed");
+    }
 
     /* Once all of the nodes have completed the barrier, send them a ACK */
-    for (int i = 0; i < allocator->total_nodes; i++) {
-        snprintf(buffer, 1024, "barrier ACK");
-        send(c_sockets[i], buffer, strlen(buffer), 0);
+    for (int i = 0; i < options->n_nodes; i++) {
+        sm_send(client_socket[i], SM_BARR_ACK);
     }
 
     return 0;
