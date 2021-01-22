@@ -144,6 +144,8 @@ int read_hostfile() {
             host_names[i] = strndup(name_buff, SM_LEN_MAX);
         }
 
+        options->n_hosts = i;
+
         /* If the file is empty, use localhost */
         if (i == 0) {
             host_names[0] = strndup("localhost", 10);
@@ -168,7 +170,7 @@ int node_start() {
     char command[SM_LEN_MAX], buffer[SM_LEN_MAX];
 
     /* Loop around when insufficient numbers of hosts */
-    host_index = (sm_node_count - 1) % options->n_nodes;
+    host_index = (sm_node_count - 1) % options->n_hosts;
 
     /* write the command to be executed on the target device */
     status = snprintf(command, SM_LEN_MAX, "ssh %s %s", options->host_names[host_index], options->program);

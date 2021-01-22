@@ -1,11 +1,32 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
 
 #include "sm_message.h"
 #include "config.h"
+
+/* 
+ * 
+*/
+msg_t *sm_msg_create(char nid, char type, char *buffer) {
+    msg_t *message = malloc(sizeof(msg_t));
+
+    message->type = type;
+    message->len  = (char) (strlen(buffer) + 3);
+    message->nid  = nid;
+
+    /* Certain messages have empty bodies (e.g. initializatio) if this is the case the buffer will be empty */
+    if (buffer == NULL) {
+        message->buffer = NULL;
+    } else {
+        message->buffer = strndup(buffer, strlen(buffer));
+    }
+
+    return message;
+}
 
 /*
  * Return 0 if all bytes are successfully sent, otherwise returns 1
@@ -16,6 +37,9 @@ int sm_send(int socket, msg_t *message) {
         bytes = send(socket, message->buffer + sent, message->len - sent, 0);
         sent += bytes;
     }
+
+    if (message->buffer != NULL) free(message->buffer);
+    if (message != NULL)         free(message);
 
     return (sent != message->len);
 }

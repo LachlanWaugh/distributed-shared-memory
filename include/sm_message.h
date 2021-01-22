@@ -19,13 +19,17 @@ typedef struct sm_message {
  *
  * The comments after the message identifiers indicate the expected message body format
 */
-#define SM_INIT        0 // {}
-#define SM_INIT_REPLY  1 // {}
-#define SM_EXIT        2 // {}
-#define SM_EXIT_REPLY  3 // {}
-#define SM_BARR        4 // {}
-#define SM_BARR_REPLY  5 // {}
-#define SM_ALLOC       6 // {size}
-#define SM_ALLOC_REPLY 7 // {offset}
-#define SM_BCAST       8 // {root_nid, value}
-#define SM_BCAST_REPLY 9 // {value}
+#define SM_INIT       0 // {}
+#define SM_INIT_REPLY 1 // {}
+#define SM_EXIT       2 // {}
+#define SM_EXIT_REPLY 3 // {}
+#define SM_BARR       4 // {}
+#define SM_BARR_REPLY 5 // {}
+#define SM_ALOC       6 // {size}
+#define SM_ALOC_REPLY 7 // {offset}
+#define SM_CAST       8 // {root_nid, value}
+#define SM_CAST_REPLY 9 // {value}
+
+msg_t *sm_msg_create(char nid, char type, char *buffer);
+int    sm_send(int socket, msg_t *message);
+msg_t *sm_recv(int socket);

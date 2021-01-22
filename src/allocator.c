@@ -10,20 +10,26 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 
 #include "allocator.h"
 #include "config.h"
+
+int sm_fatal(char *message) {
+    fprintf(stderr, ANSI_COLOR_RED "Error: %s.\n" ANSI_COLOR_RESET, message);
+    return -1;
+}
 
 int allocator_init() {
     struct sockaddr_in address;
     int status, sock, opt = 1;
 
-    /*  */
+    /* Create and initialize the list of memory pages */
     for (int i = 0; i < SM_MAX_PAGES; i++) {
         sm_page_table[i].writer = -1;
         sm_page_table[i].readers = malloc(options->n_nodes * sizeof(int));
 
-        for (int j = 0; j < options->n_nodes) {
+        for (int j = 0; j < options->n_nodes; j++) {
             sm_page_table[i].readers[j] = 0;
         }
     }
@@ -42,26 +48,29 @@ int allocator_init() {
     }
 
     /* Prepare the shared memory mapping and information */
-    sm_memory_map = mmap();
+    /* Keep a cache of the memory map in the allocator to reduce the overhead of read-faults */
+    sm_memory_map = mmap((void *)0x6f0000000000, 0xFFFF * getpagesize(), 
+                PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if (sm_memory_map == MAP_FAILED) return sm_fatal("failed to map memory");
     sm_node_count = 0;
 
     /* Create the communication socket */
     sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == 0) return fatal("failed to create socket");
+    if (sock == 0) return sm_fatal("failed to create socket");
     sm_socket = sock;
 
     address.sin_family      = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port        = htons(PORT);
+    address.sin_port        = htons(SM_PORT);
 
     status = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
-    if (status < 0) return fatal("failed setting socket options");
+    if (status < 0) return sm_fatal("failed setting socket options");
 
     status = bind(sock, (struct sockaddr *)&address, sizeof(address));
-    if (status < 0) return fatal("failed to bind socket");
+    if (status < 0) return sm_fatal("failed to bind socket");
 
     status = listen(sock, options->n_nodes);
-    if (status < 0) return fatal("failed to listen to socket");
+    if (status < 0) return sm_fatal("failed to listen to socket");
 
     return 0;
 }
@@ -69,7 +78,7 @@ int allocator_init() {
 int allocator_end() {
     /* Free the page list  */
     for (int i = 0; i < SM_MAX_PAGES; i++) {
-        free(sm_page_table[i]->writers);
+        free(sm_page_table[i].writers);
     }
 
     /* Free the list of client sockets */
@@ -87,131 +96,114 @@ int allocate() {
     struct sockaddr_in address;
     fd_set fds;
     int status, max_sock, activity, client, addrlen = sizeof(address),
-        *c_sockets = allocator->c_sockets;
     char buffer[1024] = "\0";
 
     /* First, initialize all of the client nodes' sockets */
-    while (allocator->n_nodes < allocator->total_nodes) {
+    while (sm_node_count < options->n_nodes) {
         /* Check the socket for the new connection */
-        client = accept(allocator->socket, (struct sockaddr *)&address, (socklen_t *)&addrlen);
-        if (client < 0) return fatal("Failed to accept connections");
+        client = accept(sm_socket, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+        if (client < 0) {
+            return sm_fatal("Failed to accept connections");
+        }
 
         /* Initailize the new node and socket */
         status = node_init(allocator, client);
-        if (status < 0) return fatal("Node initialization failed");
+        if (status < 0) {
+            return sm_fatal("Node initialization failed");
+        }
     }
 
     /*
-     * Wait for messages from the clients to come in, running 
-     * until all nodes have been closed
+     * Wait for messages from the clients to come in, running until all nodes have been closed
     */
-    while(allocator->n_nodes > 0) {
+    while(sm_node_count > 0) {
         FD_ZERO(&fds);
         max_sock = 0;
 
         /* Initialize the list of client sockets */
-        for (int i = 0; i < allocator->total_nodes; i++) {
-            if (c_sockets[i] > 0)        FD_SET(c_sockets[i], &fds);
-            if (c_sockets[i] > max_sock) max_sock = c_sockets[i];
-        }
+        for (int i = 0; i < options->n_nodes; i++) {
+            if (client_sockets[i] > 0)
+                FD_SET(client_sockets[i], &fds);
 
-        /*
-         * Check the message queue to make sure there aren't any pending messages 
-         * this is used in the fault handler to receive the value of a page without losing
-         * messages from clients that have already been sent
-        */
-        for (msg_t *msg = allocator->m_queue; allocator->m_queue; dequeue(allocator)) {
-            status = node_execute(allocator, msg->nid, msg->request);
-            if (status) return fatal("failed to execute command");
+            if (client_sockets[i] > max_sock)
+                max_sock = client_sockets[i];
         }
 
         activity = select(max_sock+1, &fds, NULL, NULL, NULL);
         /* Check each client to see if they have any pending requests */
-        for (int i = 0; i < allocator->total_nodes; i++) {
-            if (FD_ISSET(c_sockets[i], &fds)) {
+        for (int i = 0; i < options->n_nodes; i++) {
+            if (FD_ISSET(client_sockets[i], &fds)) {
                 memset(buffer, 0, 1024);
-                recv(c_sockets[i], buffer, 1023, 0);
+                recv(client_sockets[i], buffer, 1023, 0);
 
                 /* Execute the received request */
-                status = node_execute(allocator, i, buffer);
-                if (status) return fatal("failed to execute command");
+                status = node_execute(i, buffer);
+                if (status) {
+                    return sm_fatal("failed to execute command");
+                }
             }
         }
     }
 
-    allocator_end(allocator);
+    allocator_end();
     while(wait(NULL) > 0);
     return 0;
 }
 
 /* Initialize the connection between the allocator and the client node */
 int node_init(int client) {
-    char buffer[1024];
-
     /* Ensure that it is an initialization request */
-    recv(client, buffer, 1023, 0);
-    if (strcmp(buffer, "init")) 
-        return fatal("invalid initialization request");
+    msg_t *init = sm_recv(client);
+    if (init->type != SM_INIT) {
+        return sm_fatal("invalid initialization request");
+    }
+
+    /* */
+    sm_send(client, SM_INIT_ACK, NULL);
 
     /* Add it to the database */
-    allocator->c_sockets[allocator->n_nodes] = client;
-    allocator->n_nodes++;
-
-    /* Return a message to the node, indicating n_nodes and it's nid */
-    snprintf(buffer, MSG_LEN_MAX, "nid: %d, nodes: %d\n", 
-                allocator->n_nodes - 1, allocator->n_nodes);
-    send(client, buffer, strlen(buffer), 0);
+    client_sockets[sm_node_count] = client;
+    sm_node_count++;
 
     return 0;
 }
 
-/* Pass the received command from the client to the correct function to execute it */
-int node_execute(int nid, char request[]) {
-    int status = -1;
-
-    /* Handle sm_node_exit() */
-    if (strstr(request, "close")) {
-        status = node_close(allocator, nid, request);
-    /* Handle sm_barrier() */
-    } else if (strstr(request, "barrier")) {
-        status = node_barrier(allocator, nid, request);
-    /* Handle sm_malloc() */
-    } else if (strstr(request, "allocate")) {
-        status = node_allocate(allocator, nid, request);
-    /* Handle sm_bcast() */
-    } else if (strstr(request, "cast")) {
-        status = node_cast(allocator, nid, request);
-    /* Handle a signal */
-    } else if (strstr(request, "fault")) {
-        status = handle_fault(allocator, nid, request);
-    /* Handle an invalid command received */
-    } else {
-        status = fatal("Invalid message received");
-    }
-
-    return status;
-}
-
 /* Remove the memory allocated to a node and close it's socket */
 int node_close(int nid, char request[]) {
-    int *c_sockets = allocator->c_sockets;
-    char buffer[1024];
-
-    /* Return a message to the node, indicating it has been closed */
-    snprintf(buffer, MSG_LEN_MAX, "close ACK");
-    send(c_sockets[nid], buffer, strlen(buffer), 0);
+    /* */
+    sm_send(client_sockets[nid], SM_EXIT-_ACK, NULL);
 
     /* Close and NULL out the clients socket from the list */
-    close(c_sockets[nid]);
-    c_sockets[nid] = 0;
+    close(client_sockets[nid]);
+    client_sockets[nid] = 0;
     allocator->n_nodes--;
 
     return 0;
 }
 
+/* Pass the received command from the client to the correct function to execute it */
+int node_execute(msg_t *request) {
+    switch(request->type) {
+        case SM_EXIT: /* Handle sm_node_exit() */
+            return node_close(request->nid, request->buffer);
+        case SM_BARR: /* Handle sm_barrier() */
+            return node_barrier(request->nid, request->buffer);
+        case SM_ALOC: /* Handle sm_malloc() */
+            return node_allocate(request->nid, request->buffer);
+        case SM_CAST: /* Handle sm_bcast() */
+            return node_cast(request->nid, request->buffer);
+        case SM_READ: /* Handle a read fault */
+            return handle_fault(request->nid, request->buffer);
+        case SM_WRIT: /* Handle a write fault */
+            return handle_fault(request->nid, request->buffer);
+        default: /* Handle an invalid command received */
+            return sm_fatal("Invalid message received");
+    }
+}
+
 /* Wait for each node to have sent the correct message (either barrier() or bm_cast() */
 int node_wait(int nid, char *message, void **ret, int root) {
-    int mode, *c_sockets = allocator->c_sockets, status;
+    int mode, status;
     char buffer[1024];
 
     /* Differentiate between barrier and cast requests by the message received */
@@ -225,7 +217,7 @@ int node_wait(int nid, char *message, void **ret, int root) {
         while(1) {
             memset(buffer, 0, 1024);
             status = recv(c_sockets[i], buffer, 1023, 0);
-            if (status <= 0) fatal("wait: failed to receive message from socket");
+            if (status <= 0) sm_fatal("wait: failed to receive message from socket");
 
             /* If the request is a barrier, go to the next node */
             if (strstr(buffer, message)) {
@@ -236,7 +228,7 @@ int node_wait(int nid, char *message, void **ret, int root) {
 
             /* If the request isn't correct, execute it */
             status = node_execute(allocator, i, buffer);
-            if (status) return fatal("failed to exit command");
+            if (status) return sm_fatal("failed to exit command");
         }
     }
 
@@ -252,7 +244,7 @@ int node_barrier(int nid, char request[]) {
      * before continuing was extracted into a separate function to be reused for sm_bcast
     */
     status = node_wait(allocator, nid, "barrier", NULL, 0);
-    if (status) return fatal("node wait failed");
+    if (status) return sm_fatal("node wait failed");
 
     /* Once all of the nodes have completed the barrier, send them a ACK */
     for (int i = 0; i < allocator->total_nodes; i++) {
@@ -317,7 +309,7 @@ int node_cast(int nid, char request[]) {
      * before continuing was extracted into a separate function to be reused for sm_barrier
     */
     status = node_wait(allocator, nid, "cast", &address, root);
-    if (status) return fatal("node wait failed");
+    if (status) return sm_fatal("node wait failed");
 
     /* All of the nodes have hit the cast, so send back the new value */
     for (int i = 0; i < allocator->total_nodes; i++) {
@@ -347,7 +339,7 @@ int handle_fault(int nid, char request[]) {
     /* Message the owner of the chunk and request it's page */
     snprintf(buffer, 1023, "request %s: %d", type_s, page->offset);
     status = send(allocator->c_sockets[page->writer], buffer, strlen(buffer), 0);
-    if (status <= 0) return fatal("failed to send page request to node");
+    if (status <= 0) return sm_fatal("failed to send page request to node");
     
     if (allocator->log) {
         if (type == 1) {
@@ -368,7 +360,7 @@ int handle_fault(int nid, char request[]) {
         /* Receive the page from the page's owner */
         memset(buffer, 0, 4196);
         status = recv(allocator->c_sockets[page->writer], buffer, 4196, 0);
-        if (status <= 0) return fatal("failed to receive message in fault handler");
+        if (status <= 0) return sm_fatal("failed to receive message in fault handler");
 
         /* Enqueue messages that aren't the page */
         if (strstr(buffer, "page: ") == 0) {
@@ -381,7 +373,7 @@ int handle_fault(int nid, char request[]) {
 
     /* Send this to the node that triggered the fault */
     status = send(allocator->c_sockets[nid], buffer, strlen(buffer), 0);
-    if (status <= 0) return fatal("failed to send page to node");
+    if (status <= 0) return sm_fatal("failed to send page to node");
 
     return 0;
 }

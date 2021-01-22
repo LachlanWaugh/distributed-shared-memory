@@ -5,6 +5,5 @@
 
 int run();
 int clean();
-int fatal(char *message);
 
 #endif

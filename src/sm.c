@@ -118,7 +118,6 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
         return sm_fatal("failed to receive initalization acknowledgement");
     }
 
-
     sscanf(buffer, "nid: %d, nodes: %d\n", nid, nodes);
     /* Map in the shared memory */
     sm_map = mmap((void *)0x6f0000000000, 0xFFFF * getpagesize(), 

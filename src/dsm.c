@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "dsm.h"
+#include "config.h"
 #include "allocator.h"
 #include "sm_setup.h"
 #include "sm_message.h"
@@ -26,11 +27,6 @@ int main(int argc, char **argv) {
     /* De-allocate all of the memory used */
     result = clean();
     return result;
-}
-
-int fatal(char *message) {
-    fprintf(stderr, "Error: %s.\n", message);
-    return -1;
 }
 
 /* 
@@ -65,11 +61,11 @@ int clean() {
 /*
  *
  */
-int run() {    
+int run() {
     /* Start  the allocator to receive messages from the clients */
     int status = allocator_init();
     if (status) {
-        fatal("failed to initialize the server");
+        return sm_fatal("failed to initialize the server");
     }
 
     /* Loop until you've created the required number of processes */
@@ -89,10 +85,14 @@ int run() {
             else        exit(EXIT_SUCCESS);
         /* Error occurred if fork() */
         } else {
-            fatal("fork() failed");
+            sm_fatal("fork() failed");
             exit(EXIT_FAILURE);
         }
     }
 
-    return 0; // return allocate();
+    /* Reset the node_count for use in initializing communication with the nodes */
+    sm_node_count = 0;
+    
+    /* */
+    return allocate();
 }
