@@ -35,6 +35,9 @@ void sm_segv(int signum, siginfo_t *si, void *ctx) {
     long offset = (char *) si->si_addr - sm_map;
 
     /* Send a message to the allocator to find the value at the address */
+    status = sm_send(sm_nid);
+
+
     snprintf(buffer, 1023, "read fault: node %d offset %ld", sm_nid, offset);
     send(sm_sock, buffer, strlen(buffer), 0);
 

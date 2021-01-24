@@ -29,14 +29,16 @@ typedef struct sm_message {
 #define SM_ALOC_REPLY 7 // {offset}
 #define SM_CAST       8 // {root_nid, value}
 #define SM_CAST_REPLY 9 // {value}
-#define SM_READ       10 // {milk}
-#define SM_READ_REPLY 11 // {milk}
-#define SM_WRIT       12 // {milk}
-#define SM_WRIT_REPLY 13 // {milk}
-
+/* Specifically read/write faults */
+#define SM_READ       10 // {page}
+#define SM_READ_REPLY 11 // {page_contents}
+#define SM_WRIT       12 // {page}
+#define SM_WRIT_REPLY 13 // {}
+#define SM_RELEASE    14 // {page}
+#define SM_RLSE_REPLY 15 // {page_contents}
 
 msg_t *sm_msg_create(char nid, char type, char buffer[]);
 int    sm_msg_free  (msg_t *message);
-int    sm_send      (char nid, char type, char buffer[]);
+int    sm_send      (int socket, char nid, char type, char buffer[]);
 int    sm_recv      (int socket, msg_t **message);
 int    sm_recv_type (int socket, msg_t **messsage, int type);

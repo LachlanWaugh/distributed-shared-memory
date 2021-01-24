@@ -174,57 +174,70 @@ int node_cast(int nid, char request[]) {
     return 0;
 }
 
-int handle_fault(int nid, char request[]) {
-    int offset, type, page_n, status;
-    char buffer[4196] = "\0", type_s[100] = "\0";
-    page_t *page;
-
-    sscanf(request, "%s fault: node %*d offset %d", type_s, &offset);
-    /* Determine if it's a read or write fault */
-    type = (strstr(type_s, "read")) ? 1: 0;
-
-    page_n = offset / getpagesize();
-    /* Get the allocation from the page list */
-    page = allocator->page_list[page_n];
-
-    /* Message the owner of the chunk and request it's page */
-    snprintf(buffer, 1023, "request %s: %d", type_s, page->offset);
-    status = send(allocator->c_sockets[page->writer], buffer, strlen(buffer), 0);
-    if (status <= 0) return sm_fatal("failed to send page request to node");
+int handle_read_fault(int nid, char request[]) {
+    int status, offset;
     
+    /* Get the allocation from the page list */
+    page_n = offset / getpagesize();
+    page = sm_page_table[page_n];
+
+    /* Send the page to the node that triggered the fault */
+    char buffer[] = {}
+    status = sm_send(client_sockets, nid, SM_READ_)
+    if (status) return sm_fatal("failed to send page to node");
+
     if (allocator->log) {
-        if (type == 1) {
-            fprintf(allocator->log, "#%d: read fault @ %d\n\
-                                     #%d: releasing ownership of %d\n\
-                                     #%d: receiving read permission for %d\n", 
-                                    nid, page_n, page->writer, page_n, nid, page_n);
-        } else {
-            fprintf(allocator->log, "#%d: write fault @ %d\n\
-                                     #%d: releasing ownership of %d\n\
-                                     #%d: receiving ownership of %d\n", 
-                                    nid, page_n, page->writer, page_n, nid, page_n);
-        }
+        fprintf(options->log_file, "#%d: read fault @ %d\n\
+                                            #%d: releasing ownership of %d\n\
+                                            #%d: receiving read permission for %d\n", 
+                                            nid, page_n, page->writer, page_n, nid, page_n);
     }
+}
 
-    /* Receive messages from the page owner until the page is found, enqueueing other messages */
-    while (1) {
-        /* Receive the page from the page's owner */
-        memset(buffer, 0, 4196);
-        status = recv(allocator->c_sockets[page->writer], buffer, 4196, 0);
-        if (status <= 0) return sm_fatal("failed to receive message in fault handler");
+int handle_write_fault(int nid, char request[]) {
+    int status, offset;
+    msg_t *message;
+    char *page_contents
 
-        /* Enqueue messages that aren't the page */
-        if (strstr(buffer, "page: ") == 0) {
-            enqueue(allocator, page->writer, buffer);
-        /* Otherwise capture the page and return it */
-        } else {
+    /* Find where the fault occurred from the message */
+    sscanf(request, "%d", &offset);
+
+    /* Find the page from the page table */
+    page_n = offset / getpagesize();
+    page   = sm_page_table[page_n];
+
+    /* Send a message to the current writer of the node to release ownership of the page */
+    char buffer[] = {offset}
+    status = sm_send(client_sockets[page->writer], nid, SM_RELEASE, buffer);
+    if (status) return sm_fatal("sending invalidate release message failed.");
+
+    /* Wait for a response from the node */
+    while(1) {
+        status = sm_recv(client_sockets[page->writer], &message);
+        if (status) return sm_fatal("receiving release acknowledgement failed in write fault handler");
+
+        /* If the received message is the release reply, break from the loop */
+        if (message->type == SM_RLSE_REPLY) {
+            sscanf(message->buffer, "%p", &page_contents);
+            free(message);
             break;
+        /* Otherwise, execute the command and receive another message from the node */
+        } else {
+            node_execute(message);
         }
     }
 
-    /* Send this to the node that triggered the fault */
-    status = send(allocator->c_sockets[nid], buffer, strlen(buffer), 0);
-    if (status <= 0) return sm_fatal("failed to send page to node");
+    /* Send the page to the node that triggered the fault */
+    char buffer[] = {}
+    status = sm_send(client_sockets, nid, SM_READ_)
+    if (status) return sm_fatal("failed to send page to node");
+
+    if (allocator->log) {
+        fprintf(options->log_file, "#%d: write fault @ %d\n\
+                                    #%d: releasing ownership of %d\n\
+                                    #%d: receiving ownership of %d\n", 
+                                    nid, page_n, page->writer, page_n, nid, page_n);
+    }
 
     return 0;
 }

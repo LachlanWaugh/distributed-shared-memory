@@ -38,16 +38,16 @@ int sm_msg_free(msg_t *message) {
 /*
  * Return 0 if all bytes are successfully sent, otherwise returns 1
 */
-int sm_send(char nid, char type, char buffer[]) {
+int sm_send(int socket, char nid, char type, char buffer[]) {
     msg_t *message = sm_msg_create(nid, type, buffer);
     int sent = 0, bytes = 0;
 
     while (sent < message->len) {
-        bytes = send(nid, message->buffer + sent, message->len - sent, 0);
+        bytes = send(socket, message->buffer + sent, message->len - sent, 0);
         sent += bytes;
     }
 
-    if (message != NULL)         free(message);
+    if (message != NULL) free(message);
 
     return (sent != message->len);
 }
