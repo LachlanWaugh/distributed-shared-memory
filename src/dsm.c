@@ -18,8 +18,8 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    /* Connect the node processes and start-up the allocator*/
-    result = run();
+    /* Go into a loop to serve requests from the nodes until all of them have exited */
+    result = allocate();
     if (result) {
         exit(EXIT_FAILURE);
     }
@@ -33,66 +33,29 @@ int main(int argc, char **argv) {
  * Free allocated memory
  */
 int clean() {
+    /* Free all of the memory associated with the allocator */
+    allocator_end();
+
     free(options->program);
 
     if (options->host_names) {
-        for (int i = 0; options->host_names[i] != NULL; i++) {
-            free(options->host_names[i]);
-        }
-
-        // free(options->host_names);
+        for (int i = 0; options->host_names[i] != NULL; i++) free(options->host_names[i]);
+        free(options->host_names);
     }
-
     if (options->prog_args) {
-        for (int i = 0; options->prog_args[i] != NULL; i++) {
-            free(options->prog_args[i]);
-        }
-
+        for (int i = 0; options->prog_args[i] != NULL; i++)  free(options->prog_args[i]);
         free(options->prog_args);
     }
-
     if (options->log_file) {
         fclose(options->log_file);
     }
 
-    return 0;
-}
-
-/*
- *
- */
-int run() {
-    /* Start  the allocator to receive messages from the clients */
-    int status = allocator_init();
-    if (status) {
-        return sm_fatal("failed to initialize the server");
-    }
-
-    /* Loop until you've created the required number of processes */
-    while (sm_node_count < options->n_nodes) {
-        pid_t pid = fork();
-        sm_node_count++;
-
-        /* Parent process created */
-        if (pid > 0) {
-            continue;
-            /* Wait for children to finish, allocate memory */
-        /* Child process created */
-        } else if (pid == 0) {
-            /* Execute the program via ssh */
-            status = node_start();
-            if (status) exit(EXIT_FAILURE);
-            else        exit(EXIT_SUCCESS);
-        /* Error occurred if fork() */
-        } else {
-            sm_fatal("fork() failed");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    /* Reset the node_count for use in initializing communication with the nodes */
-    sm_node_count = 0;
+    /* Finally, wait for all of the */
+    // for (int i = 0; i < options->n_nodes; i++) {
+    //     waitpid(global_pids[i], NULL, 0);
+    // }
     
-    /* */
-    return allocate();
+    free(options);
+
+    return 0;
 }

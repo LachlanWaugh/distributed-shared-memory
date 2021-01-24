@@ -12,9 +12,12 @@
 #include <signal.h>
 
 #include "sm.h"
+#include "config.h"
+#include "sm_message.h"
 
 int sm_sock, sm_nid;
 char *sm_map;
+// sm_page_table[];
 
 int sm_fatal(char *message) {
     fprintf(stderr, "Error: %s.\n", message);
@@ -80,18 +83,12 @@ void sm_poll(int signum) {
     return;
 }
 
-int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
-    char *ip, buffer[1024] = "\0";
-    int sock, status, port;
-
-    /* Extract the contact information from the end of the arguments */
-    ip   = strndup(argv[0][*argc - 2], 0x100);
-    port = strtoul(argv[0][*argc - 1], '\0', 0xA);
-    *argc -= 2;
+int socket_init(char *ip, int port) {
+    int status = 0;    
 
     /* Create the socket to communicate with the allocator */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == 0) {
+    sm_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sm_sock == 0) {
         return sm_fatal("Failed to create socket");
     }
 
@@ -101,32 +98,14 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     inet_pton(AF_INET, ip, &address.sin_addr);
 
     /* Connect to the allocator to initalize the node */
-    status = connect(sock, (struct sockaddr *)&address, sizeof(address));
-    if (status < 0) {
-        return sm_fatal("failed to connect socket");
-    }
+    status = connect(sm_sock, (struct sockaddr *)&address, sizeof(address));
+    if (status < 0) return sm_fatal("failed to connect socket");
+}
 
-    /* Send an initalization request to the dsm */
-    status = send(sock, "init", 5, 0);
-    if (status < 4) {
-        return sm_fatal("failed to send initialization to allocator");
-    }
-
-    /* Parse the received message to find the nid and nodes */
-    status = recv(sock, buffer, 1023, 0);
-    if (status < 1) {
-        return sm_fatal("failed to receive initalization acknowledgement");
-    }
-
-    sscanf(buffer, "nid: %d, nodes: %d\n", nid, nodes);
-    /* Map in the shared memory */
-    sm_map = mmap((void *)0x6f0000000000, 0xFFFF * getpagesize(), 
-                PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    if (sm_map == MAP_FAILED) return sm_fatal("failed to map memory");
-
+int handler_init() {
     /* enable SIGPOLL on the socket */
-    fcntl(sock, F_SETFL, O_ASYNC);
-    fcntl(sock, F_SETOWN, getpid());
+    fcntl(sm_sock, F_SETFL, O_ASYNC);
+    fcntl(sm_sock, F_SETOWN, getpid());
 
     /* Create the handler for POLL */
     struct sigaction sa;
@@ -141,54 +120,86 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, NULL);
 
-    sm_nid = *nid, sm_sock = sock;
+    return 0;
+}
+
+int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
+    char *ip;
+    int status, port;
+    msg_t *message;
+
+    /* Extract the contact information from the end of the arguments */
+    ip   = strndup(argv[0][*argc - 2], 0x4);
+    port = strtoul(argv[0][*argc - 1], '\0', 10);
+    *argc -= 2;
+
+    socket_init(ip, port);
+    handler_init();
+
+    /* Send an initalization request to the dsm */
+    status = sm_send(sm_sock, SM_INIT, NULL);
+    if (status) {
+        return sm_fatal("failed to send initialization to allocator");
+    }
+
+    /* Parse the received message to find the nid and nodes */
+    status = sm_recv(sm_sock, &message);
+    if (status || message->type != SM_INIT_REPLY) {
+        return sm_fatal("failed to receive initalization acknowledgement");
+    } else {
+        *nid = sm_nid = (int) message->nid;
+        *nodes = 7777;
+    }
+
+    /* Map in the shared memory */
+    sm_map = mmap((void *)SM_MAP_START, SM_NUM_PAGES * getpagesize(), 
+                PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if (sm_map == MAP_FAILED) return sm_fatal("failed to map memory");
+
     fflush(stdout);
     return 0;
 }
 
 void sm_node_exit (void) {
-    char buffer[1024] = "\0";
+    msg_t *message;
     int status;
-    
+
+    fflush(NULL);
     sm_barrier();
 
-    /* Send a message to the allocator to remove this node */
-    snprintf(buffer, 0x20, "close node %d", sm_nid);    
-    status = send(sm_sock, buffer, strlen(buffer), 0);
-    if (status <= 0) {
-        sm_fatal("failed to send close to allocator");
-    } else {
-        /* Wait for an acknowledgement */
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) sm_fatal("failed to receive closing acknowledgement");
-    }
-
+    /* Send a message to the allocator to remove this node */  
+    status = sm_send(sm_nid, SM_EXIT, NULL);
+    if (status) sm_fatal("failed to send close to allocator");
+    
+    /* Wait for an acknowledgement */
+    status = sm_recv(sm_nid, &message);
+    if (status) sm_fatal("failed to receive closing acknowledgement");
+    
     munmap(sm_map, 0xFFFF * getpagesize());
     fflush(stdout);
     return;
 }
 
 void *sm_malloc (size_t size) {
-    char buffer[1024] = "\0";
     int status = 0, offset = 0;
+    msg_t *message;
 
     /* Send a message to the allocator to allocate some memory */
-    snprintf(buffer, 1023, "allocate node %d size %ld", sm_nid, size);    
-    status = send(sm_sock, buffer, strlen(buffer), 0);
-    if (status <= 0) {
-        sm_fatal("failed to send alloc to allocator");
+    char buffer[] = {size};
+    status = sm_send(sm_nid, SM_ALOC, buffer);
+    if (status) {
+        sm_fatal("milk");
         return NULL;
     }
 
-    memset(buffer, 0, 1024);
-    /* Wait for an memory offset message */
-    status = recv(sm_sock, buffer, 1023, 0);
-    if (status <= 0) {
-        sm_fatal("failed to receive malloc reply");
+    /* Wait for a reply with the memory allocation offset */
+    status = sm_recv_type(sm_sock, &message, SM_ALOC_REPLY);
+    if (status) {
+        sm_fatal("milk");
         return NULL;
     }
 
-    sscanf(buffer, "offset %d", &offset);
+    offset = message->buffer[3];
     mprotect(sm_map + offset, getpagesize(), PROT_READ|PROT_WRITE);
     memset(sm_map+offset, 0, size);
 
@@ -197,26 +208,16 @@ void *sm_malloc (size_t size) {
 }
 
 void sm_barrier (void) {
-    char buffer[1024] = "\0";
     int status;
+    msg_t *message;
 
-    /* Send a message to the allocator to remove this node */
-    snprintf(buffer, 1023, "barrier");
-    status = send(sm_sock, buffer, strlen(buffer), 0);
-    if (status <= 0) {
-        sm_fatal("failed to send barrier to allocator");
-    } else {
-        /* Wait for an acknowledgement */
-        while(1) {
-            status = recv(sm_sock, buffer, 1023, MSG_PEEK);
-            if (status <= 0) {
-                sm_fatal("failed to receive barrier acknowledgement");
-                break;
-            } else if (strcmp(buffer, "barrier ACK") == 0) {
-                recv(sm_sock, buffer, 1023, 0);
-                break;
-            }
-        }
+    status = sm_send(sm_nid, SM_BARR, NULL);
+    if (status) sm_fatal("milk");
+
+    /* Wait for an acknowledgement */
+    status = sm_recv_type(sm_nid, &message, SM_BARR_REPLY);
+    if (status || message->type != SM_BARR_REPLY) {
+        sm_fatal("failed to receive barrier acknowledgement");
     }
 
     fflush(stdout);
@@ -224,29 +225,20 @@ void sm_barrier (void) {
 }
 
 void sm_bcast (void **addr, int root_nid) {
-    char buffer[1024] = "\0", *address;
     int status;
+    msg_t *message;
 
     sm_barrier();
 
-    /* Send a message to the allocator to cast the address */
-    snprintf(buffer, 1023, "cast %p nid %d root %d", 
-             *addr, sm_nid, root_nid);
+    char buffer[] = {root_nid, (char *) *addr};
+    status = sm_send(sm_nid, SM_CAST, buffer);
+    if (status) sm_fatal("milk");
+    
+    /* Wait for an acknowledgement */
+    status = sm_recv_type(sm_sock, &message, SM_CAST_REPLY);
+    if (status) sm_fatal("failed to receive cast acknowledgement");
 
-    status = send(sm_sock, buffer, strlen(buffer), 0);
-    if (status <= 0) {
-        sm_fatal("failed to send cast request to allocator");
-    } else {
-        memset(buffer, 0, 1024);
-        /* Wait for an acknowledgement */
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0)
-            sm_fatal("failed to receive cast acknowledgement");
-
-        sscanf(buffer, "address %p", &address);
-    }
-
-    *addr = address;
+    *addr = message->buffer[3];
     fflush(stdout);
     return;
 }

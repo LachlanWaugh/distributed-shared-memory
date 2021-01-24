@@ -20,6 +20,11 @@ HOSTFILE, which defaults to `hosts'.  If the file does not exist, \
 #define MSG_LEN_MAX     256
 #define SM_MAX_NODES    16
 
+#define SM_BUFF_SIZE 1024
+
+#define SM_NUM_PAGES 0xFFFF
+#define SM_MAP_START 0x6f0000000000
+
 #define SM_LEN_MAX 128
 #define SM_ARG_MAX 32
 #define SM_HOSTS_MAX 10
@@ -51,6 +56,8 @@ struct memory_page {
 struct memory_page sm_page_table[SM_MAX_PAGES];
 
 void *sm_memory_map;                /* A cache of all of the shared memory */
+int   sm_current_page;              /* The next available page in the memory map */
+int   sm_current_offset;            /* The next memory allocation offset within the free page */
 int   sm_node_count;                /* The number of active nodes */
 int   sm_socket;                    /* The socket used to receive connections */
 int   client_sockets[SM_MAX_NODES]; /* All of the connected client sockets */
