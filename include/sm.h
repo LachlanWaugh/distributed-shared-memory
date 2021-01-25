@@ -58,5 +58,13 @@ void sm_barrier (void);
  */
 void sm_bcast (void **addr, int root_nid);
 
+int sm_fatal(char *message);
+void sm_poll(int signum);
+void sm_segv(int signum, siginfo_t *si, void *ctx);
+int sm_read_fault(siginfo_t *si, long offset);
+int sm_write_fault(siginfo_t *si, long offset);
+
+int socket_init(char *ip, int port);
+int handler_init();
 
 #endif /* !_SM_H  */

@@ -36,6 +36,8 @@ typedef struct sm_message {
 #define SM_WRIT_REPLY 13 // {}
 #define SM_RELEASE    14 // {page}
 #define SM_RLSE_REPLY 15 // {page_contents}
+#define SM_REQUEST    16 // {page}
+#define SM_REQU_REPLY 17 // {}
 
 msg_t *sm_msg_create(char nid, char type, char buffer[]);
 int    sm_msg_free  (msg_t *message);

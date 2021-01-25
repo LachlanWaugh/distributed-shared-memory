@@ -20,7 +20,7 @@ int node_init(int client) {
     }
 
     /* */
-    sm_send(sm_node_count, SM_INIT_REPLY, NULL);
+    sm_send(client, sm_node_count, SM_INIT_REPLY, NULL);
     sm_node_count++;
 
     return 0;
@@ -29,7 +29,7 @@ int node_init(int client) {
 /* Remove the memory allocated to a node and close it's socket */
 int node_close(int nid) {
     /* */
-    sm_send(nid, SM_EXIT_REPLY, NULL);
+    sm_send(client_sockets[nid], nid, SM_EXIT_REPLY, NULL);
 
     /* Close and NULL out the clients socket from the list */
     close(client_sockets[nid]);
@@ -111,7 +111,7 @@ int node_barrier(int nid) {
 
     /* Once all of the nodes have completed the barrier, send them a ACK */
     for (int i = 0; i < options->n_nodes; i++) {
-        sm_send(i, SM_BARR_REPLY, NULL);
+        sm_send(client_sockets[i], i, SM_BARR_REPLY, NULL);
     }
 
     return 0;
@@ -138,7 +138,7 @@ int node_allocate(int nid, char request[]) {
 
     /* Return a message informing the client of the offset their allocation will be at */
     char buffer[] = {offset};
-    status = sm_send(nid, SM_ALOC_REPLY, buffer);
+    status = sm_send(client_sockets[nid], nid, SM_ALOC_REPLY, buffer);
     if (status) return sm_fatal("milk");
 
     /* Write the action to the log file */
@@ -183,7 +183,7 @@ int handle_read_fault(int nid, char request[]) {
 
     /* Send the page to the node that triggered the fault */
     char buffer[] = {}
-    status = sm_send(client_sockets, nid, SM_READ_)
+    status = sm_send(client_sockets[nid], nid, SM_READ)
     if (status) return sm_fatal("failed to send page to node");
 
     if (allocator->log) {
@@ -197,7 +197,7 @@ int handle_read_fault(int nid, char request[]) {
 int handle_write_fault(int nid, char request[]) {
     int status, offset;
     msg_t *message;
-    char *page_contents
+    char *page_contents, buffer[4096];
 
     /* Find where the fault occurred from the message */
     sscanf(request, "%d", &offset);
@@ -207,8 +207,8 @@ int handle_write_fault(int nid, char request[]) {
     page   = sm_page_table[page_n];
 
     /* Send a message to the current writer of the node to release ownership of the page */
-    char buffer[] = {offset}
-    status = sm_send(client_sockets[page->writer], nid, SM_RELEASE, buffer);
+    buffer = {offset}
+    status = sm_send(client_sockets[page->writer], page->writer, SM_RELEASE, buffer);
     if (status) return sm_fatal("sending invalidate release message failed.");
 
     /* Wait for a response from the node */
@@ -228,8 +228,9 @@ int handle_write_fault(int nid, char request[]) {
     }
 
     /* Send the page to the node that triggered the fault */
-    char buffer[] = {}
-    status = sm_send(client_sockets, nid, SM_READ_)
+    memset(buffer, 0, 4096)
+    char buffer[] = {page}
+    status = sm_send(client_sockets[nid], nid, SM_READ_REPLY, buffer)
     if (status) return sm_fatal("failed to send page to node");
 
     if (allocator->log) {

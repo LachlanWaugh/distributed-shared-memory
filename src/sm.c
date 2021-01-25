@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -10,6 +12,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <signal.h>
+#include <ucontext.h>
+#include <errno.h>
 
 #include "sm.h"
 #include "config.h"
@@ -28,59 +32,85 @@ int sm_fatal(char *message) {
 }
 
 void sm_segv(int signum, siginfo_t *si, void *ctx) {
-    char buffer[1024] = "\0";
-    int value, size;
-
     /* Find the offset of the variable from the memory base */
     long offset = (char *) si->si_addr - sm_map;
 
+    /* Determine if it is a read or write fault, and direct it to the relevant function */
+    if (((ucontext_t *)ctx)->uc_mcontext.gregs[REG_ERR] & 0x2) {
+        sm_write_fault(si, offset);
+    } else {
+        sm_read_fault(si, offset);
+    }
+
+    return;
+}
+
+int sm_read_fault(siginfo_t *si, long offset) {
+    char buffer[4096] = "\0";
+    int status, size, value;
+    msg_t *message;
+    
     /* Send a message to the allocator to find the value at the address */
-    status = sm_send(sm_nid);
+    snprintf(buffer, sizeof(long), "%ld", offset);
+    status = sm_send(sm_sock, sm_nid, SM_READ, buffer);
+    if (status) sm_fatal("milk");
 
+    /* Wait for a response containing the new page */
+    status = sm_recv_type(sm_sock, &message, SM_READ_REPLY);
+    if (status) sm_fatal("failed to receive read fault ACK");
+    sscanf(message->buffer, "%d %d", &size, &value);
 
-    snprintf(buffer, 1023, "read fault: node %d offset %ld", sm_nid, offset);
-    send(sm_sock, buffer, strlen(buffer), 0);
-
-    memset(buffer, 0, 1023);
-    /* Wait for the value to be returned */
-    recv(sm_sock, buffer, 1023, 0);
-    sscanf(buffer, "size %d, value %d", &size, &value);
-
+    /* Write the new value to the page */
     mprotect(si->si_addr, size, PROT_READ);
     *(char *)(si->si_addr) = value;
 
-    return;
+    return 0;
+}
+
+int sm_write_fault(siginfo_t *si, long offset) {
+    char buffer[4096] = "\0";
+    int status, size;
+    msg_t *message;
+    
+    /* Send a message to the allocator to find the value at the address */
+    snprintf(buffer, 4096, "%ld", offset);
+    status = sm_send(sm_sock, sm_nid, SM_WRIT, buffer);
+    if (status) sm_fatal("milk");
+
+    /* Wait for a response containing the new page */
+    status = sm_recv_type(sm_sock, &message, SM_WRIT_REPLY);
+    if (status) sm_fatal("failed to receive read fault ACK");
+
+    /* Write the new value to the page */
+    mprotect(si->si_addr, getpagesize(), PROT_WRITE | PROT_READ);
+    *(char *)(si->si_addr) = 0; // TODO: Change to the relevant value
+
+    return 0;
 }
 
 void sm_poll(int signum) {
     char buffer[4196] = "\0";
     int offset, status;
- 
-    recv(sm_sock, buffer, 1023, MSG_PEEK);
+    msg_t *message;
+
+    status = sm_recv(sm_sock, &message);
+    if (status) sm_fatal("failed to receive read request");
+
+    sscanf(buffer, "%d", &offset);
 
     /* Handle a read request for a memory address */
-    if (strstr(buffer, "request read")) {
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) sm_fatal("failed to receive read request");
-        sscanf(buffer, "request %d", &offset);
-
+    if (message->type == SM_REQUEST) {
         /* Send the request page back */
-        snprintf(buffer, 4096 + 6, "page: %s", sm_map + offset);
-        status = send(sm_sock, buffer, strlen(buffer), 0);
-        if (status <= 0) sm_fatal("failed to send page to allocator");
-
+        snprintf(buffer, 4096 + 6, "%s", sm_map + offset);
+        status = sm_send(sm_sock, sm_nid, SM_REQU_REPLY, buffer);
+        if (status) sm_fatal("failed to send page to allocator");
     /* Handle a loss of write permissions */
-    } else if (strstr(buffer, "request write")) {
-        status = recv(sm_sock, buffer, 1023, 0);
-        if (status <= 0) sm_fatal("failed to receive write request");
-        sscanf(buffer, "write request: %d", &offset);
-
+    } else if (message->type == SM_RELEASE) {
         /* Invalidate the required memory and send an acknowledgement */
         mprotect(sm_map + offset, getpagesize(), PROT_NONE);
 
-        snprintf(buffer, 1023, "invalidate ACK");
-        status = send(sm_sock, buffer, strlen(buffer), 0);
-        if (status <= 0) sm_fatal("failed to send invalidation acknowledgement to allocator");
+        status = sm_send(sm_sock, sm_nid, SM_RLSE_REPLY, NULL);
+        if (status) sm_fatal("failed to send invalidation acknowledgement to allocator");
     }
 
     return;
@@ -103,6 +133,8 @@ int socket_init(char *ip, int port) {
     /* Connect to the allocator to initalize the node */
     status = connect(sm_sock, (struct sockaddr *)&address, sizeof(address));
     if (status < 0) return sm_fatal("failed to connect socket");
+
+    return 0;
 }
 
 int handler_init() {
@@ -140,7 +172,7 @@ int sm_node_init (int *argc, char **argv[], int *nodes, int *nid) {
     handler_init();
 
     /* Send an initalization request to the dsm */
-    status = sm_send(sm_sock, SM_INIT, NULL);
+    status = sm_send(sm_sock, sm_nid, SM_INIT, NULL);
     if (status) {
         return sm_fatal("failed to send initialization to allocator");
     }
@@ -171,7 +203,7 @@ void sm_node_exit (void) {
     sm_barrier();
 
     /* Send a message to the allocator to remove this node */  
-    status = sm_send(sm_nid, SM_EXIT, NULL);
+    status = sm_send(sm_sock, sm_nid, SM_EXIT, NULL);
     if (status) sm_fatal("failed to send close to allocator");
     
     /* Wait for an acknowledgement */
@@ -189,7 +221,7 @@ void *sm_malloc (size_t size) {
 
     /* Send a message to the allocator to allocate some memory */
     char buffer[] = {size};
-    status = sm_send(sm_nid, SM_ALOC, buffer);
+    status = sm_send(sm_sock, sm_nid, SM_ALOC, buffer);
     if (status) {
         sm_fatal("milk");
         return NULL;
@@ -214,11 +246,11 @@ void sm_barrier (void) {
     int status;
     msg_t *message;
 
-    status = sm_send(sm_nid, SM_BARR, NULL);
+    status = sm_send(sm_sock, sm_nid, SM_BARR, NULL);
     if (status) sm_fatal("milk");
 
     /* Wait for an acknowledgement */
-    status = sm_recv_type(sm_nid, &message, SM_BARR_REPLY);
+    status = sm_recv_type(sm_sock, &message, SM_BARR_REPLY);
     if (status || message->type != SM_BARR_REPLY) {
         sm_fatal("failed to receive barrier acknowledgement");
     }
@@ -229,19 +261,21 @@ void sm_barrier (void) {
 
 void sm_bcast (void **addr, int root_nid) {
     int status;
+    char buffer[1024];
     msg_t *message;
 
     sm_barrier();
 
-    char buffer[] = {root_nid, (char *) *addr};
-    status = sm_send(sm_nid, SM_CAST, buffer);
+    snprintf(buffer, 1024, "%d %s", root_nid, (char *) *addr);
+    status = sm_send(sm_sock, sm_nid, SM_CAST, buffer);
     if (status) sm_fatal("milk");
     
     /* Wait for an acknowledgement */
     status = sm_recv_type(sm_sock, &message, SM_CAST_REPLY);
     if (status) sm_fatal("failed to receive cast acknowledgement");
 
-    *addr = message->buffer[3];
+    sscanf(message->buffer, "%*d %*d %*d %s", (char *) *addr);
+    
     fflush(stdout);
     return;
 }
